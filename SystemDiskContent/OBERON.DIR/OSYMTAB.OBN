@@ -1,0 +1,776 @@
+MODULE OSymTab;   (*NW 25.6.2014  / AP 4.3.2020 / 8.3.2019  in Oberon-07*)
+  IMPORT Files, OScanner, Loader, SYSTEM;
+  (*Definition of data types Object and Type, which together form the data structure
+    called "symbol table". Contains procedures for creation of Objects, and for search:
+    NewObj, this, thisimport, thisfield (and OpenScope, CloseScope).
+    Handling of import and export, i.e. reading and writing of "symbol files" is done by procedures
+    Import and Export. This module contains the list of standard identifiers, with which
+    the symbol table (universe), and that of the pseudo-module SYSTEM are initialized.
+   *)
+
+  CONST
+    maxTypTab = 64;
+
+    (* class values*)
+    Head*     = 0;
+    Const*    = 1;
+    Var*      = 2;   (* global and local variables, including scalar non-VAR parameters *)
+    Indirect* = 3;   (* structured parameters (arrays, records) and scalar VAR parameters *)
+    Fld*      = 4;
+    Typ*      = 5;
+    SProc*    = 6;
+    SFunc*    = 7;
+    Mod*      = 8;
+
+    (* form values*)
+    Byte* = 1; Bool* = 2; Char* = 3; Int* = 4; Long* = 5; Real* = 6; Set* = 7;
+    Pointer* = 8; NilTyp* = 9; NoTyp* = 10; Proc* = 11;
+    String* = 12; Array* = 13; Record* = 14;
+
+  TYPE
+    Object*   = POINTER TO  ObjDesc;
+    Type*     = POINTER TO TypeDesc;
+    IdentPtr* = POINTER TO IdentRec;
+    IdentRec* = RECORD id*: OScanner.Ident END;
+    ObjDesc*  = RECORD (* record size = 15 + name size *)
+      class*: BYTE;
+      expo* : BOOLEAN;
+      lev*: INTEGER;     (* >0 : local, =0 : global, <0 : extern *)
+      next*, dsc*: Object;
+      type*: Type;
+      val*, extension* : INTEGER;
+      rdo*: BOOLEAN;   (* read-only*)
+      name*: OScanner.Ident; (* actual number of char is allocated *)
+    END ;
+    TypeDesc* = RECORD (* record size = 18 *)
+      form*: INTEGER;
+      ref*, mno*: INTEGER;  (*ref is only used for import/export*)
+      nofpar*: INTEGER;  (*for procedures, extension level for records*)
+      len*: INTEGER;  (*for arrays, len < 0 => open array; for records: adr of descriptor*)
+      dsc*, typobj*: Object;
+      base*: Type;  (*for arrays, records, pointers*)
+      size*: INTEGER;  (*in bytes*)
+    END ;
+
+  (* Object classes and the meaning of "val":
+    class    val
+    ----------
+    Var      address
+    Indirect address
+    Const    value
+    Fld      offset
+    Typ      type descriptor (TD) address
+    SProc    inline code number
+    SFunc    inline code number
+    Mod      key
+
+  Type forms and the meaning of "dsc" and "base":
+    form     dsc      base
+    ------------------------
+    Pointer  -        type of dereferenced object
+    Proc     params   result type
+    Array    -        type of elements
+    Record   fields   extension *)
+
+  VAR
+    topScope*, universe*, system*: Object;
+    byteType*, boolType*, charType*, intType*, longType*,
+    realType*,  setType*,  nilType*,  noType*,  strType* : Type;
+    sym : INTEGER;
+    nofmod, Ref: INTEGER;
+    typtab: ARRAY maxTypTab OF Type;
+    dummy*: Object;
+    f: Files.FILE;
+
+(* $[+ remove keep procedure names *)
+(* $O- don't check for overflows in our address calculations *)
+(* $T- remove tests *)
+
+  PROCEDURE Read(VAR x: INTEGER);
+    VAR b: BYTE;
+  BEGIN
+    Files.ReadByte(f, b);
+    IF b < 128 THEN x := b ELSE x := b - 256 END
+  END Read;
+
+  PROCEDURE ReadWord(VAR x: INTEGER);
+  BEGIN Files.ReadWord(f, x)
+  END ReadWord;
+
+  PROCEDURE ReadString(VAR s: ARRAY OF CHAR);
+    VAR i: INTEGER; ch: CHAR; b: BYTE;
+  BEGIN
+    i := -1; REPEAT INC(i); Files.ReadByte(f, b); s[i]:=CHR(b) UNTIL b = 0
+  END ReadString;
+
+  PROCEDURE Write(x: INTEGER);
+  BEGIN Files.WriteByte(f, x)
+  END Write;
+
+  PROCEDURE WriteWord(x: INTEGER);
+  BEGIN Files.WriteWord(f, x)
+  END WriteWord;
+
+  PROCEDURE WriteString(s: ARRAY OF CHAR);
+    VAR i: INTEGER; b: BYTE;
+  BEGIN
+    i := -1; REPEAT INC(i); b := ORD(s[i]); Files.WriteByte(f, b) UNTIL b = 0
+  END WriteString;
+
+  PROCEDURE NextToken; BEGIN OScanner.Get(sym) END NextToken;
+
+  PROCEDURE AllocateObj(VAR obj: Object; id: OScanner.Ident);
+    VAR idLen, objSize : INTEGER;
+  BEGIN
+    idLen := 0; REPEAT INC(idLen) UNTIL id[idLen] = 0X;
+    objSize := SYSTEM.SIZE(ObjDesc) - SYSTEM.SIZE(OScanner.Ident);
+    SYSTEM.ALLOCATE(obj, objSize+idLen+1);
+    SYSTEM.COPY(SYSTEM.ADR(id), SYSTEM.VAL(INTEGER, obj)+objSize, idLen);
+        (* TODO: implement ADR(lvalue) *)
+  END AllocateObj;
+
+  PROCEDURE type(ref, form: INTEGER; size: INTEGER): Type;
+    VAR tp: Type;
+  BEGIN
+    NEW(tp);
+    tp.form := form;
+    tp.size := size;
+    tp.ref  := ref;
+    tp.base := NIL;
+    typtab[ref] := tp;
+    RETURN tp
+  END type;
+
+  PROCEDURE enter(name: ARRAY OF CHAR; cl: INTEGER; type: Type; n: INTEGER);
+    VAR obj: Object;
+        id: OScanner.Ident;
+  BEGIN
+    id := name;
+    AllocateObj(obj, id);
+    obj.class := cl;
+    obj.type  := type;
+    obj.val   := n;
+    obj.dsc   := NIL;
+    IF cl = Typ THEN type.typobj := obj END ;
+    obj.next  := system;
+    system    := obj
+  END enter;
+
+  PROCEDURE NewObj*(VAR obj: Object; id: OScanner.Ident; class: INTEGER);  (*insert new Object with name id*)
+    VAR new, x: Object;
+  BEGIN
+    x := topScope;
+    WHILE (x.next # NIL) & (x.next.name # id) DO x := x.next END ;
+    IF x.next = NIL THEN
+      AllocateObj(new, id);
+      new.class := class;
+      new.next  := NIL;
+      new.rdo   := FALSE;
+      new.dsc   := NIL;
+      x.next    := new;
+      obj       := new
+    ELSE obj := x.next; OScanner.Mark("mult def")
+    END
+  END NewObj;
+
+  PROCEDURE thisObj*(): Object;
+    VAR s, x: Object;
+  BEGIN s := topScope;
+    REPEAT x := s.next;
+      WHILE (x # NIL) & (x.name # OScanner.id) DO x := x.next END ;
+      s := s.dsc
+    UNTIL (x # NIL) OR (s = NIL);
+    RETURN x
+  END thisObj;
+
+  PROCEDURE thisimport*(mod: Object): Object;
+    VAR obj: Object;
+  BEGIN
+    IF mod.rdo THEN
+      IF mod.name[0] # 0X THEN
+        obj := mod.dsc;
+        WHILE (obj # NIL) & (obj.name # OScanner.id) DO obj := obj.next END
+      ELSE obj := NIL
+      END
+    ELSE obj := NIL
+    END ;
+    RETURN obj
+  END thisimport;
+
+  PROCEDURE thisfield*(rec: Type): Object;
+    VAR fld: Object;
+  BEGIN fld := rec.dsc;
+    WHILE (fld # NIL) & (fld.name # OScanner.id) DO fld := fld.next END ;
+    RETURN fld
+  END thisfield;
+
+  PROCEDURE OpenScope*;
+    VAR s: Object;
+  BEGIN NEW(s); s.class := Head; s.dsc := topScope; s.next := NIL; topScope := s
+  END OpenScope;
+
+  PROCEDURE CloseScope*;
+  BEGIN topScope := topScope.dsc
+  END CloseScope;
+
+  (*------------------------------- Import ---------------------------------*)
+
+  PROCEDURE MakeFileName*(VAR FName: OScanner.Ident; name, ext: ARRAY OF CHAR);
+    VAR i, j: INTEGER;
+  BEGIN i := 0; j := 0;
+    WHILE (i < 8) & (i < LEN(name)) & (name[i] # 0X) DO FName[i] := name[i]; INC(i) END ;
+    REPEAT FName[i]:= ext[j]; INC(i); INC(j) UNTIL (j >= LEN(ext)) OR (ext[j] = 0X);
+    FName[i] := 0X;
+  END MakeFileName;
+
+  PROCEDURE AllocateId(id: OScanner.Ident): IdentPtr;
+    VAR idLen : INTEGER;
+        p: IdentPtr;
+  BEGIN
+    idLen := 0; REPEAT INC(idLen) UNTIL id[idLen] = 0X;
+    SYSTEM.ALLOCATE(p, idLen+1);
+    SYSTEM.COPY(SYSTEM.ADR(id), SYSTEM.VAL(INTEGER, p), idLen);
+    RETURN p
+  END AllocateId;
+
+  PROCEDURE ThisModule(name, orgname: OScanner.Ident; decl: BOOLEAN; key: INTEGER): Object;
+    VAR mod, obj, obj1: Object;
+        idLen: INTEGER;
+        extName : IdentPtr;
+        found : BOOLEAN;
+  BEGIN obj1 := topScope; obj := obj1.next;  (*search for module*)
+    found := FALSE;
+    WHILE (obj # NIL) & ~found DO
+      extName := SYSTEM.VAL(IdentPtr, obj.extension);
+      found   := (extName.id = orgname);
+      IF ~found THEN obj1 := obj; obj := obj1.next END
+    END;
+    IF obj = NIL THEN  (*new module, search for alias*)
+      obj := topScope.next;
+      WHILE (obj # NIL) & (obj.name # name) DO obj := obj.next END ;
+      IF obj = NIL THEN (*insert new module*)
+        AllocateObj(mod, name);
+        mod.class := Mod;
+        mod.rdo   := FALSE;
+        mod.extension := SYSTEM.VAL(INTEGER, AllocateId(orgname));
+        mod.val   := key;
+        mod.lev   := nofmod;
+        INC(nofmod);
+        mod.dsc   := NIL;
+        mod.next  := NIL;
+        IF decl THEN mod.type := noType ELSE mod.type := nilType END ;
+        obj1.next := mod; obj := mod
+      ELSIF decl THEN
+        IF obj.type.form = NoTyp
+        THEN OScanner.Mark("mult def")
+        ELSE OScanner.Mark("invalid import order")
+        END
+      ELSE OScanner.Mark("conflict with alias")
+      END
+    ELSIF decl THEN (*module already present, explicit import by declaration*)
+      IF  obj.type.form = NoTyp
+      THEN OScanner.Mark("mult def")
+      ELSE OScanner.Mark("invalid import order")
+      END
+    END ;
+    RETURN obj
+  END ThisModule;
+
+  PROCEDURE InType(thismod: Object; VAR T: Type);
+    VAR
+      ref, class, form, np: INTEGER;
+      fld, par, obj, mod, last: Object;
+      t: Type;
+      name, modname: OScanner.Ident;
+      readonly, key: INTEGER;
+  BEGIN
+    Read(ref);
+    IF ref < 0 THEN T := typtab[-ref];  (*already read*)
+(*      WRITELN('found reference to ', T.typobj.name) *)
+    ELSE
+(*      WRITELN('found new reference', ref); *)
+      NEW(t); T := t; typtab[ref] := t; t.mno := thismod.lev;
+      Read(form); t.form := form;
+      IF form = Pointer THEN
+(*        WRITELN('adding pointer type'); *)
+        InType(thismod, t.base); t.size := 2
+      ELSIF form = Array THEN
+        InType(thismod, t.base);
+        ReadWord(t.len);
+        ReadWord(t.size)
+      ELSIF form = Record THEN
+(*        WRITELN('adding record type'); *)
+        InType(thismod, t.base);
+        IF t.base.form = NoTyp
+        THEN t.base := NIL; obj := NIL
+        ELSE obj := t.base.dsc
+        END ;
+        ReadWord(t.len);     (*TD offset*)
+        ReadWord(t.nofpar);  (*ext level*)
+        ReadWord(t.size);
+        Read(class); last := NIL;
+        WHILE class # 0 DO  (*fields*)
+          ReadString(name);  (* field name is empty if not exported *)
+          AllocateObj(fld, name);
+          fld.class := class;
+          IF last = NIL THEN t.dsc := fld ELSE last.next := fld END ;
+          last := fld;
+          IF fld.name[0] # 0X
+          THEN fld.expo := TRUE;  InType(thismod, fld.type)
+          ELSE fld.expo := FALSE; fld.type := nilType
+          END ;
+          ReadWord(fld.val);
+          Read(class)
+        END ;
+        IF last = NIL THEN t.dsc := obj ELSE last.next := obj END
+      ELSIF form = Proc THEN
+(*        WRITELN('adding proc type'); *)
+        InType(thismod, t.base);
+        obj := NIL; np := 0; Read(class);
+        WHILE class # 0 DO  (*parameters*)
+          name[0] := 0X;
+          AllocateObj(par, name);
+          par.class := class;
+          Read(readonly);
+          par.rdo   := readonly = 1;
+          InType(thismod, par.type);
+          par.next  := obj;
+          obj := par; INC(np); Read(class)
+        END ;
+        t.dsc := obj; t.nofpar := np; t.size := 4
+      END ;
+      ReadString(modname);
+      IF modname[0] #  0X THEN  (*re-import ========*)
+        ReadWord(key);
+        ReadString(name);
+        mod := ThisModule(modname, modname, FALSE, key);
+        obj := mod.dsc;  (*search type*)
+        WHILE (obj # NIL) & (obj.name # name) DO obj := obj.next END ;
+        IF obj # NIL THEN T := obj.type   (*type object found in object list of mod*)
+        ELSE (*insert new type object in object list of mod*)
+          AllocateObj(obj, name);
+          obj.class := Typ;
+          obj.next  := mod.dsc;
+          mod.dsc   := obj;
+          obj.type  := t;
+          t.mno     := mod.lev;
+          t.typobj  := obj;
+          T := t
+        END ;
+        typtab[ref] := T
+      END
+    END
+  END InType;
+
+  PROCEDURE Import*(VAR modid, modid1: OScanner.Ident);
+    VAR key: INTEGER; class, k: INTEGER;
+      obj: Object;  t: Type;
+      thismod: Object;
+      name, modname, fname: OScanner.Ident;
+      ext: Loader.Extension;
+  BEGIN
+    IF modid1 = "SYSTEM" THEN
+      thismod := ThisModule(modid, modid1, TRUE,  key); DEC(nofmod);
+      thismod.lev := 0; thismod.dsc := system; thismod.rdo := TRUE
+    ELSE
+      ext := "SMB";
+      IF Loader.FileSearch(f, modid1, ext) THEN
+(*        FileDesc.InitFile(f); *)
+        ReadWord(key); ReadWord(key); ReadString(modname);
+        thismod := ThisModule(modid, modid1, TRUE, key); thismod.rdo := TRUE;
+        Read(class);
+        WHILE class # 0 DO
+          ReadString(name);
+          AllocateObj(obj, name);
+          obj.class := class;
+          InType(thismod, obj.type);
+          obj.lev := -thismod.lev;
+          IF class = Typ THEN
+            t := obj.type; t.typobj := obj; Read(k);
+            (*fixup bases of previously declared pointer types*)
+            WHILE k # 0 DO typtab[k].base := t; Read(k) END
+          ELSE
+            IF class = Const THEN
+              ReadWord(obj.val);
+              IF obj.type.form = Real THEN ReadWord(obj.extension) END
+            ELSIF class = Var THEN ReadWord(obj.val); obj.rdo := TRUE
+            END
+          END ;
+          obj.next := thismod.dsc; thismod.dsc := obj; Read(class)
+        END ;
+      ELSE OScanner.Mark("import not available")
+      END
+    END
+  END Import;
+
+  (*-------------------------------- Export ---------------------------------*)
+
+  PROCEDURE OutType(t: Type);
+    VAR obj, fld, bot, mod: Object;
+        orgname: IdentPtr;
+
+    PROCEDURE OutPar(par: Object; n: INTEGER);
+      VAR cl: INTEGER;
+    BEGIN
+      IF n > 0 THEN
+        OutPar(par.next, n-1); cl := par.class;
+        Write(cl);
+        IF par.rdo THEN Write(1) ELSE Write(0) END ;
+        OutType( par.type)
+      END
+    END OutPar;
+
+    PROCEDURE FindHiddenPointers(typ: Type; offset: INTEGER);
+      VAR fld: Object; i, n: INTEGER;
+    BEGIN
+      IF (typ.form = Pointer) OR (typ.form = NilTyp) THEN
+        Write(Fld); Write(0); WriteWord(offset)
+      ELSIF typ.form = Record THEN fld := typ.dsc;
+        WHILE fld # NIL DO FindHiddenPointers(fld.type, fld.val + offset); fld := fld.next END
+      ELSIF typ.form = Array THEN i := 0; n := typ.len;
+        WHILE i < n DO FindHiddenPointers(typ.base, typ.base.size * i + offset); INC(i) END
+      END
+    END FindHiddenPointers;
+
+  BEGIN
+    IF t.ref > 0 THEN (*type was already output*) Write(-t.ref)
+    ELSE
+      obj := t.typobj;
+      IF obj # NIL
+      THEN Write(Ref); t.ref := Ref; INC(Ref)
+      ELSE Write(0) (* anonymous *)
+      END ;
+      Write(t.form);
+      IF    t.form = Pointer THEN OutType(t.base)
+      ELSIF t.form = Array   THEN OutType(t.base); WriteWord(t.len); WriteWord(t.size)
+      ELSIF t.form = Record  THEN
+        IF t.base # NIL
+        THEN OutType(t.base); bot := t.base.dsc
+        ELSE OutType(noType);  bot := NIL
+        END ;
+        IF obj # NIL
+        THEN WriteWord(t.len); (* FF: was obj.exno *)
+        ELSE WriteWord(0)
+        END ;
+        WriteWord(t.nofpar);
+        WriteWord(t.size);
+        fld := t.dsc;
+        WHILE fld # bot DO  (*fields*)
+          IF fld.expo THEN
+            Write(Fld);
+            WriteString(fld.name);
+            OutType(fld.type);
+            WriteWord(fld.val)  (*offset*)
+          ELSE FindHiddenPointers(fld.type, fld.val)
+          END ;
+          fld := fld.next
+        END ;
+        Write(0)
+      ELSIF t.form = Proc THEN
+        OutType(t.base); OutPar(t.dsc, t.nofpar); Write(0)
+      END ;
+      IF (t.mno > 0) & (obj # NIL) THEN  (*re-export, output name*)
+        mod := topScope.next;
+        WHILE (mod # NIL) & (mod.lev # t.mno) DO mod := mod.next END ;
+        IF mod # NIL THEN
+          orgname := SYSTEM.VAL(IdentPtr, mod.extension);
+          WriteString(orgname.id);
+          WriteWord  (mod.val);
+          WriteString(obj.name)
+        ELSE OScanner.Mark("re-export not found"); Write(0)
+        END
+      ELSE Write(0)
+      END
+    END
+  END OutType;
+
+  PROCEDURE Export*(modid: OScanner.Ident; VAR newSF: BOOLEAN; VAR key: INTEGER);
+    VAR x, sum, oldkey: INTEGER;
+      obj, obj0: Object;
+      filename: OScanner.Ident;
+  BEGIN
+    Ref := Record + 1; (* start after predefined references *)
+    MakeFileName(filename, modid, ".smb");
+    DISPOSE(f);
+    Files.Create(f, filename);
+    WriteWord(0); (*placeholder*)
+    WriteWord(0); (*placeholder for key to be inserted at the end*)
+    WriteString(modid);
+    obj := topScope.next;
+    WHILE obj # NIL DO
+      IF obj.expo THEN
+        Write(obj.class);
+        WriteString(obj.name);
+        OutType(obj.type);
+        IF obj.class = Typ THEN
+          IF obj.type.form = Record THEN
+            obj0 := topScope.next;  (*check whether this is base of previously declared pointer types*)
+            WHILE obj0 # obj DO
+              IF (obj0.type.form = Pointer)
+               & (obj0.type.base = obj.type)
+               & (obj0.type.ref > 0)
+              THEN Write(obj0.type.ref) END ;
+              obj0 := obj0.next
+            END
+          END ;
+          Write(0)
+        ELSIF obj.class = Const THEN
+          WriteWord(obj.val);
+          IF obj.type.form = Real THEN WriteWord(obj.extension) END
+        ELSIF obj.class = Var THEN
+          WriteWord(obj.val)
+        END
+      END ;
+      obj := obj.next
+    END ;
+    Write(0); (* end of objects *)
+    IF ODD(INT(Files.NextPos(f))) THEN Write(0) END;
+    FOR Ref := Record+1 TO maxTypTab-1 DO typtab[Ref] := NIL END ;
+    Files.SetPos(f, LONG(0)); sum := 0; ReadWord(x);  (* compute key (checksum) *)
+    WHILE NOT Files.EOF(f) DO sum := sum + x; ReadWord(x) END ;
+    key := sum; newSF := TRUE;
+    Files.SetPos(f, LONG(2));
+    WriteWord(sum);
+    Files.Close(f)
+  END Export;
+
+  PROCEDURE qualident*(VAR obj: Object);
+  BEGIN
+    obj := thisObj(); NextToken;
+    IF obj = NIL THEN OScanner.Mark("undef"); obj := dummy END ;
+    IF (sym = OScanner.period) & (obj.class = Mod) THEN
+      NextToken;
+      IF sym = OScanner.ident THEN
+        obj := thisimport(obj); NextToken;
+        IF obj = NIL THEN OScanner.Mark("undef"); obj := dummy END
+      ELSE OScanner.Missing(OScanner.ident); obj := dummy
+      END
+    END
+  END qualident;
+
+  PROCEDURE IsExtension*(t0, t1: Type): BOOLEAN;
+  BEGIN (*t1 is an extension of t0*)
+    RETURN (t0 = t1) OR (t1 # NIL) & IsExtension(t0, t1.base)
+  END IsExtension;
+
+  PROCEDURE EqualSignatures*(t0, t1: Type): BOOLEAN;
+    VAR p0, p1: Object; com: BOOLEAN;
+  BEGIN com := TRUE;
+    IF (t0.base = t1.base) & (t0.nofpar = t1.nofpar) THEN
+      p0 := t0.dsc; p1 := t1.dsc;
+      WHILE p0 # NIL DO
+        IF (p0.class = p1.class)
+        &  (p0.rdo   = p1.rdo)
+        &  ((p0.type = p1.type)
+         OR (p0.type.form = Array)
+          & (p1.type.form = Array)
+          & (p0.type.len  = p1.type.len)
+          & (p0.type.base = p1.type.base)
+         OR (p0.type.form = Proc)
+          & (p1.type.form = Proc)
+          & EqualSignatures(p0.type, p1.type))
+        THEN p0 := p0.next; p1 := p1.next
+        ELSE p0 := NIL; com := FALSE
+        END
+      END
+    ELSE com := FALSE
+    END ;
+    RETURN com
+  END EqualSignatures;
+
+  PROCEDURE IdentList*(level, class: INTEGER; VAR first: Object);
+    VAR obj: Object;
+  BEGIN
+    IF OScanner.token = OScanner.ident THEN
+      NewObj(first, OScanner.id, class); NextToken; OScanner.CheckExport(level, first.expo);
+      WHILE sym = OScanner.comma DO
+        NextToken;
+        IF sym = OScanner.ident THEN
+          NewObj(obj, OScanner.id, class); NextToken; OScanner.CheckExport(level, obj.expo)
+        ELSE OScanner.Missing(OScanner.ident)
+        END
+      END;
+      OScanner.Expect(OScanner.colon)
+    ELSE first := NIL
+    END
+  END IdentList;
+
+  PROCEDURE ProcedureType*(level: INTEGER; ptype: Type; VAR parblksize: INTEGER);
+    VAR first, obj: Object; size: INTEGER; nofpar: INTEGER;
+
+    PROCEDURE FormalType(level: INTEGER; VAR typ: Type; dim: INTEGER);
+      VAR obj: Object; dmy: INTEGER;
+    BEGIN
+      IF sym = OScanner.ident THEN
+        qualident(obj);
+        IF obj.class = Typ THEN typ := obj.type
+        ELSE OScanner.Mark("not a type"); typ := intType END
+      ELSIF sym = OScanner.array THEN
+        NextToken; OScanner.Expect(OScanner.of);
+        IF dim >= 1 THEN OScanner.Mark("multi-dimensional open arrays not implemented") END ;
+        NEW(typ); typ.form := Array; typ.len := -1; typ.size := 4;
+        FormalType(level, typ.base, dim+1)
+      ELSIF sym = OScanner.procedure THEN
+        NextToken; OpenScope;
+        NEW(typ); typ.form := Proc; typ.size := 4; dmy := 0; ProcedureType(level, typ, dmy);
+        typ.dsc := topScope.next; CloseScope
+      ELSE OScanner.Missing(OScanner.ident); typ := noType
+      END
+    END FormalType;
+
+    PROCEDURE FPSection(level: INTEGER; VAR parblksize: INTEGER; VAR nofpar: INTEGER): Object;
+      VAR obj, first: Object; tp: Type;
+        paramsize: INTEGER; class: INTEGER; rdo: BOOLEAN;
+    BEGIN
+      IF sym = OScanner.var
+      THEN class := Indirect; NextToken
+      ELSE class := Var
+      END ;
+      IdentList(level, class, first); FormalType(level, tp, 0); rdo := FALSE;
+      IF (class = Var) & (tp.form >= Array) THEN class := Indirect; rdo := TRUE END ;
+      IF (tp = realType) OR (tp = longType) OR (tp.form = Proc)
+      THEN paramsize := 2
+      ELSE paramsize := 1
+      END;
+      obj := first;
+      WHILE obj # NIL DO
+        INC(nofpar);
+        obj.class  := class;
+        obj.type   := tp;
+        obj.rdo    := rdo;
+        obj.lev    := level;
+        parblksize := parblksize + paramsize;
+        obj.val    := parblksize; (* correct offset will be calculated once all formal params are stored *)
+        IF (tp.form = Array)   & (tp.len < 0)         (* open array *)
+        OR (tp.form = Record)  & (tp.nofpar # 0)      (* tagged record *)
+        THEN
+          INC(parblksize)    (* another word for length of open array / type tag of record *)
+        END;
+        obj        := obj.next
+      END ;
+      IF nofpar > 60 THEN OScanner.Mark("too many parameters") END;
+      RETURN first
+    END FPSection;
+
+  BEGIN (* ProcedureType *)
+    ptype.base := noType;
+    nofpar      := 0;
+    ptype.dsc  := NIL;
+    parblksize  := 0;
+    IF OScanner.token = OScanner.lparen THEN
+      NextToken;
+      IF sym = OScanner.rparen THEN NextToken
+      ELSE
+        first := FPSection(level, parblksize, nofpar);
+        WHILE sym = OScanner.semicolon DO
+          NextToken;
+          obj := FPSection(level, parblksize, nofpar)
+        END ;
+        OScanner.Expect(OScanner.rparen);
+        obj := first;
+        WHILE obj # NIL DO
+          obj.val := parblksize - obj.val + 3; (* fixes offsets of params *)
+          obj := obj.next
+        END;
+      END ;
+      IF sym = OScanner.colon THEN  (*function*)
+        NextToken;
+        IF sym = OScanner.ident THEN
+          qualident(obj); ptype.base := obj.type;
+          IF ~((obj.class = Typ) & (obj.type.form IN {Byte .. Pointer, Proc})) THEN
+            OScanner.Mark("illegal function type")
+          END
+        ELSE OScanner.Mark("type identifier expected")
+        END
+      END
+    END ;
+    ptype.nofpar := nofpar;
+  END ProcedureType;
+
+PROCEDURE Init*;
+BEGIN
+  NEW(f);
+  topScope := universe; nofmod := 1;
+
+  byteType := type(Byte, Int,  1);
+  boolType := type(Bool, Bool, 1);
+  charType := type(Char, Char, 1);
+  intType  := type(Int,  Int,  2);
+  longType := type(Long, Long, 4);
+  realType := type(Real, Real, 4);
+  setType  := type(Set,  Set,  2);
+  nilType  := type(NilTyp, NilTyp, 2);
+  noType   := type(NoTyp, NoTyp, 2);
+  strType  := type(String, String, 8);
+
+  (*initialize universe with data types and in-line procedures*)
+  system := NIL;  (*n = procno*10 + nofpar*)
+(*functions*)
+  enter("CAP",  SFunc, charType, 241);
+  enter("MSW",  SFunc,  intType, 221);
+  enter("LSW",  SFunc,  intType, 211);
+  enter("DIVC", SFunc,  intType, 142);
+  enter("MULC", SFunc,  intType, 132);
+  enter("SUBC", SFunc,  intType, 122);
+  enter("ADDC", SFunc,  intType, 112);
+  enter("CARRY",SFunc,  intType, 100);
+(*
+  enter("ROR",  SFunc,  intType,  92);
+  enter("ASR",  SFunc,  intType,  82);
+  enter("LSL",  SFunc,  intType,  72);
+*)
+  enter("INT",  SFunc,  intType,  81);
+  enter("LONG", SFunc, longType,  72);
+  enter("LEN",  SFunc,  intType,  61);
+  enter("CHR",  SFunc, charType,  51);
+  enter("ORD",  SFunc,  intType,  41);
+  enter("FLT",  SFunc, realType,  31);
+  enter("FLOOR",SFunc,  intType,  21);
+  enter("ODD",  SFunc, boolType,  11);
+  enter("ABS",  SFunc,  intType,   1);
+(*procedures*)
+  enter("ASSERT", SProc, noType, 111);
+  enter("CLC",    SProc, noType, 100);
+(*
+  enter("UNPK",   SProc, noType,  72);
+  enter("PACK",   SProc, noType,  62);
+*)
+  enter("DISPOSE",SProc, noType,  51);
+  enter("NEW",    SProc, noType,  41);
+  enter("EXCL",   SProc, noType,  32);
+  enter("INCL",   SProc, noType,  22);
+  enter("DEC",    SProc, noType,  11);
+  enter("INC",    SProc, noType,  01);
+(*types*)
+  enter("SET",     Typ, setType,  0);
+  enter("BOOLEAN", Typ, boolType, 0);
+  enter("BYTE",    Typ, byteType, 0);
+  enter("CHAR",    Typ, charType, 0);
+  enter("REAL",    Typ, realType, 0);
+  enter("LONGINT", Typ, longType, 0);
+  enter("INTEGER", Typ, intType,  0);
+
+  topScope := NIL; OpenScope; topScope.next := system; universe := topScope;
+
+  system := NIL;  (* initialize "unsafe" pseudo-module SYSTEM*)
+(*functions*)
+  enter("SCAN", SFunc,  intType, 233);
+  enter("FREEMEM",SFunc,intType, 200);
+  enter("GET",  SFunc,byteType, 191);
+  enter("SYS",  SFunc, intType, 182);
+  enter("SIZE", SFunc, intType, 171);
+  enter("ADR",  SFunc, intType, 161);
+  enter("VAL",  SFunc, intType, 152);
+(* procedures *)
+  enter("RELEASE",   SProc,  noType, 91);
+  enter("MARK",      SProc,  noType, 81);
+  enter("DEALLOCATE",SProc,  noType, 72);
+  enter("ALLOCATE",  SProc,  noType, 62);
+  enter("FILL", SProc,  noType, 143);
+  enter("COPY", SProc,  noType, 133);
+  enter("PUT",  SProc,  noType, 122);
+
+  NEW(dummy); dummy.class := Var; dummy.type := intType;
+END Init;
+
+END OSymTab.

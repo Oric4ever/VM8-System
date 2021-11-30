@@ -1,0 +1,828 @@
+MODULE ObnGen2;
+  (* Code generator for MCode, F.Frances 2021. CAUTION: Work In Progress *)
+IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
+
+(* $[+ remove procedure names *)
+(* $O- remove overflow checks *)
+(* $T- remove tests *)
+
+  CONST
+    DEBUG = FALSE;
+    WordSize* = 2;
+    maxTD = 64;     (* max number of tagged record types *)
+    EXTENDED = 040H;(* extended opcodes prefix *)
+    Stacked = 10; Indexed = 11; Array = 12; DeRef = 13; (* item modes of this code generator *)
+(* Item forms and meaning of fields:
+    mode       r      a       b
+    ---------------------------------
+    Const      -    value    -          (immediate value)
+    Var      level   off     -               (direct adr)
+    Indirect level   off     -             (indirect adr)
+
+    Stacked    -      -      -           (value on stack)
+    Address    -     off     -            (addr on stack)
+    Indexed    -    size     -    (addr & index on stack)
+    DeRef      -      -      -            (addr on stack)
+*)
+
+  TYPE Item*     = Gen1.Item;
+       VarSizes* = ARRAY 128 OF INTEGER;
+       Table     = ARRAY 256 OF INTEGER;
+
+  VAR
+    varsize   : INTEGER;     (* data index*)
+    nbProcs   : INTEGER;     (* Module body not taken into account *)
+    nbTypeTags: INTEGER;     (* current number of type tags *)
+    inBody    : BOOLEAN;     (* flags when compiling procedure bodies *)
+    procBase  : INTEGER;     (* "absolute" start address of current procedure *)
+
+    codePtr : Gen1.CodeBuf;   (* buffer for code generation *)
+    typeTags: ARRAY maxTD   OF OSymTab.Type;    (* types of tagged records*)
+    procAddr: ARRAY 128     OF INTEGER; (* start addresses of the procedures *)
+    globals : ARRAY 128     OF INTEGER; (* 0 for scalar variables, length for records/arrays *)
+    F       : Files.FILE;
+
+  PROCEDURE Emit0(op: INTEGER);
+  BEGIN Gen1.Emit0(op)
+  END Emit0;
+
+  PROCEDURE Emit1B(op, param: INTEGER);
+  BEGIN Gen1.Emit1B(op, param)
+  END Emit1B;
+
+  PROCEDURE PushConstant(param: INTEGER);
+  BEGIN Gen1.PushConstant(param)
+  END PushConstant;
+
+  PROCEDURE push(VAR x: Item);
+  BEGIN Gen1.push(x)
+  END push;
+
+  PROCEDURE WriteByte(b: BYTE);
+  BEGIN Files.WriteByte(F, b)
+  END WriteByte;
+  
+  PROCEDURE WriteWord(w: INTEGER);
+  BEGIN Files.WriteWord(F, w)
+  END WriteWord;
+
+  PROCEDURE LoadAdr*(VAR x: Item);
+  BEGIN Gen1.LoadAdr(x)
+  END LoadAdr;
+
+  (* Items: Conversion from constants or from Objects on the Heap to Items on the Stack*)
+
+  PROCEDURE MakeConstItem*(VAR x: Item; typ: OSymTab.Type; val: INTEGER);
+  BEGIN
+    x.mode  := OSymTab.Const;
+    x.type  := typ;
+    x.a     := val
+  END MakeConstItem;
+
+  PROCEDURE loadStringAdr(VAR x: Item);
+  VAR addr: INTEGER;
+  BEGIN
+    IF x.mode # Stacked THEN Gen1.Emit1W(0CFH, x.a - (procBase+Gen1.pc+2)) END;   (* RADDR w *)
+    x.mode := Stacked
+  END loadStringAdr;
+
+  PROCEDURE MakeItem*(VAR x: Item; y: OSymTab.Object; curlev: INTEGER);
+  BEGIN
+    x.mode := y.class;
+    x.type := y.type;
+    x.a    := y.val;
+    x.msw  := y.extension;
+    x.rdo  := y.rdo;
+    x.r    := y.lev;
+    IF    y.class = OSymTab.Indirect THEN
+      x.b := 0
+    ELSIF y.class = OSymTab.Const THEN
+      IF  y.type.form = OSymTab.String THEN
+        loadStringAdr(x);
+        x.b    := y.lev;    (*len*)
+        x.mode := Stacked
+      ELSIF y.type.form = OSymTab.Real THEN push(x)
+      END
+    END ;
+    IF (y.lev > 0) & (y.lev # curlev) & (y.class # OSymTab.Const) THEN OScanner.Mark("not accessible ") END
+  END MakeItem;
+
+  PROCEDURE MakeRealItem*(VAR x: Item; val: REAL);
+    VAR value: LONGINT;
+  BEGIN
+    x.mode  := OSymTab.Const;
+    x.type  := OSymTab.realType;
+    value   := SYSTEM.VAL(LONGINT, val);
+    x.a     := LSW(value);
+    x.msw   := MSW(value);
+    IF inBody THEN push(x) END
+  END MakeRealItem;
+
+  PROCEDURE MakeStringItem*(VAR x: Item; len: INTEGER); (*copies string from ORS-buffer to code *)
+    VAR i: INTEGER;
+  BEGIN
+    x.mode := OSymTab.Const;
+    x.type := OSymTab.strType;
+    x.b    := len;
+    IF inBody THEN
+      x.mode := Stacked;
+      Emit1B(8CH, len) (* BPUSH n : skips the following string *)
+    END;
+    x.a   := procBase + Gen1.pc;
+    x.msw := ORD(OScanner.str[0]); (* store the first char for StrToChar *)
+    FOR i:=0 TO len-1 DO Emit0(ORD(OScanner.str[i])) END
+  END MakeStringItem;
+
+  PROCEDURE NextProcNum*(): INTEGER;
+  BEGIN INC(nbProcs); RETURN nbProcs
+  END NextProcNum;
+
+  (*handling of forward reference, fixups of branch addresses and constant tables*)
+
+  PROCEDURE Fixup2*(cfjumpAddr, loopJump: INTEGER);
+  VAR displacement: INTEGER;
+      lsb : BYTE;
+  BEGIN
+    displacement := Gen1.pc - (cfjumpAddr+1);
+    IF displacement > 255 THEN
+      codePtr.code[cfjumpAddr]   := displacement MOD 256;
+      codePtr.code[cfjumpAddr+1] := displacement DIV 256;
+    ELSE
+      codePtr.code[cfjumpAddr]   := displacement - 1;
+      lsb := codePtr.code[loopJump+1];
+      IF   codePtr.code[loopJump] = 0E4H        (* BRBACK : short version *)
+      THEN codePtr.code[loopJump+1] := lsb - 1
+      ELSE (* negative 16-bits branch *)
+        codePtr.code[loopJump+1] := lsb + 1;
+        IF lsb = 0FFH THEN codePtr.code[loopJump+2] := codePtr.code[loopJump+2] + 1 END
+      END;
+      SYSTEM.COPY(SYSTEM.VAL(INTEGER,codePtr)+cfjumpAddr+2, SYSTEM.VAL(INTEGER,codePtr)+cfjumpAddr+1, displacement);
+      Gen1.SetPC(Gen1.pc-1);
+      codePtr.code[cfjumpAddr-1] := codePtr.code[cfjumpAddr-1] + 2; (* replace the opcode by its short version *)
+    END;
+  END Fixup2;
+
+  PROCEDURE FixBranchLists*(condList, endList: INTEGER);
+  VAR previousEnd, previousCond, displacement: INTEGER;
+  BEGIN
+    WHILE condList # 0 DO
+      IF endList > condList THEN
+        previousEnd  := codePtr.code[endList] + 256 * codePtr.code[endList+1];
+        displacement := Gen1.pc - (endList + 1);
+        IF displacement > 255 THEN
+          codePtr.code[endList]   := displacement MOD 256;
+          codePtr.code[endList+1] := displacement DIV 256;
+        ELSE
+          DEC(displacement);
+          codePtr.code[endList]   := displacement;
+          codePtr.code[endList-1] := 0E2H;        (* replace the opcode by its short version BRFORW *)
+          SYSTEM.COPY(SYSTEM.VAL(INTEGER,codePtr)+endList+2, SYSTEM.VAL(INTEGER,codePtr)+endList+1, displacement);
+          Gen1.SetPC(Gen1.pc-1); DEC(endList);
+        END;
+        displacement := (endList + 2) - (condList + 1);
+        endList      := previousEnd;
+      ELSE
+        displacement := Gen1.pc - (condList + 1)
+      END;
+      previousCond := codePtr.code[condList] + 256 * codePtr.code[condList+1];
+      IF displacement > 255 THEN
+        codePtr.code[condList]   := displacement MOD 256;
+        codePtr.code[condList+1] := displacement DIV 256;
+      ELSE
+        DEC(displacement);
+        codePtr.code[condList]   := displacement;
+        codePtr.code[condList-1] := 0E3H;    (* replace the opcode by its short version CBRFORW *)
+        SYSTEM.COPY(SYSTEM.VAL(INTEGER,codePtr)+condList+2, SYSTEM.VAL(INTEGER,codePtr)+condList+1, Gen1.pc - (condList + 1));
+        Gen1.SetPC(Gen1.pc-1);
+      END;
+      condList := previousCond;
+    END;
+  END FixBranchLists;
+
+  (* Code generation for Selectors, Variables, Constants *)
+
+
+  PROCEDURE Field*(VAR x: Item; y: OSymTab.Object);   (* x := x.y *)
+  VAR e: INTEGER;
+  BEGIN
+    IF    x.mode IN {OSymTab.Var, OSymTab.Indirect} THEN LoadAdr(x); x.a := y.val
+    ELSIF x.mode = Indexed THEN x.a := x.a + y.val
+    ELSE (* Stacked or DeRef *) x.a := y.val; x.mode := Indexed
+    END
+  END Field;
+
+  PROCEDURE loadTypeTag(T: OSymTab.Type);
+    VAR moduleNum, offset : INTEGER;
+  BEGIN
+    moduleNum := T.mno;
+    offset    := T.len;
+    IF moduleNum = 0
+    THEN Gen1.loadGlobal(offset)
+    ELSE Gen1.loadExtern(moduleNum-1, offset)  (* TM2R modules are 0 based *)
+    END
+  END loadTypeTag;
+
+  PROCEDURE TypeTest*(VAR x: Item; T: OSymTab.Type; varpar, isguard: BOOLEAN);
+    VAR xmode: INTEGER;
+  BEGIN
+    xmode := x.mode;
+    push(x);
+    IF OScanner.check OR NOT isguard THEN
+      IF T = NIL THEN
+        PushConstant(ORD(TRUE));
+      ELSE
+        IF x.type.form = OSymTab.Record THEN
+          IF (xmode = OSymTab.Indirect) & (x.type.nofpar # 0) (* x is a parameter... *)
+          THEN Gen1.loadParam(x.a - 1)       (* ... so its type tag is under the record reference *)
+          ELSE loadTypeTag(x.type)      (* otherwise type tag is statically known *)
+          END
+        ELSE (* pointer type test *)
+          Emit0(20H);                   (* DUPlicate the pointer *)
+          Emit1B(EXTENDED, 33);         (* get the tag at pointer-2 *)
+        END;
+        loadTypeTag(T);               (* also load T's type tag for the comparison *)
+        IF isguard
+        THEN Emit1B(EXTENDED, 27);  (* TYPCHK *)
+             Gen1.EmitW (OScanner.Line());
+        ELSE Emit0 (0A0H);          (* EQU *)
+        END
+      END
+    END;
+    x.mode := Stacked
+  END TypeTest;
+
+  (* Code generation for set operators *)
+
+  PROCEDURE SetOp*(op: INTEGER; VAR x, y: Item);   (* x := x op y *)
+    VAR xset, yset: SET;
+  BEGIN
+    IF (x.mode = OSymTab.Const) & (y.mode = OSymTab.Const) THEN
+      xset := SYSTEM.VAL(SET, x.a);
+      yset := SYSTEM.VAL(SET, y.a);
+      IF    op = OScanner.plus  THEN xset := xset + yset
+      ELSIF op = OScanner.minus THEN xset := xset - yset
+      ELSIF op = OScanner.times THEN xset := xset * yset
+      ELSIF op = OScanner.rdiv  THEN xset := xset / yset
+      END ;
+      x.a := SYSTEM.VAL(INTEGER, xset);
+    ELSE
+      IF x.mode = OSymTab.Const THEN push(x) END;
+      IF y.mode = OSymTab.Const THEN push(y) END;
+      IF    op = OScanner.plus  THEN Emit0(0E6H)                (* BITOR *)
+      ELSIF op = OScanner.minus THEN Emit0(0B7H); Emit0(0E8H)   (* COMPL, BITAND *)
+      ELSIF op = OScanner.times THEN Emit0(0E8H)                (* BITAND *)
+      ELSIF op = OScanner.rdiv  THEN Emit0(0E9H)                (* BITXOR *)
+      END ;
+    END
+  END SetOp;
+
+  (* Code generation for relations *)
+
+  PROCEDURE IntRelation*(op: INTEGER; VAR x, y: Item);   (* x := x < y *)
+  VAR op2: INTEGER;
+  BEGIN
+    IF x.mode = OSymTab.Const THEN
+      IF y.mode = OSymTab.Const THEN
+        x.type := OSymTab.boolType;
+        IF    op = OScanner.eql THEN x.a := ORD(x.a  =  y.a)
+        ELSIF op = OScanner.neq THEN x.a := ORD(x.a  #  y.a)
+        ELSIF op = OScanner.lss THEN x.a := ORD(x.a  <  y.a)
+        ELSIF op = OScanner.gtr THEN x.a := ORD(x.a  >  y.a)
+        ELSIF op = OScanner.leq THEN x.a := ORD(x.a  <= y.a)
+        ELSIF op = OScanner.geq THEN x.a := ORD(x.a  >= y.a)
+        END
+      ELSE
+        IF op IN {OScanner.lss, OScanner.gtr} THEN op := OScanner.lss + OScanner.gtr - op END;
+        IF op IN {OScanner.leq, OScanner.geq} THEN op := OScanner.leq + OScanner.geq - op END;
+        IntRelation(op, y, x)
+      END
+    ELSIF (y.mode = OSymTab.Const) & (y.type.form # OSymTab.Proc) THEN
+      op2 := y.a;
+      IF    op = OScanner.eql THEN
+        IF op2 = 0
+        THEN Emit0(0ABH)                    (* EQ0 *)
+        ELSE PushConstant(op2); Emit0(0A0H) (* EQU *)
+        END
+      ELSIF op = OScanner.neq THEN
+        IF op2 = 0
+        THEN Emit0(0CBH)                    (* NE0 *)
+        ELSE PushConstant(op2); Emit0(0A1H) (* NEQ *)
+        END
+      ELSE
+        PushConstant(op2); Emit0(0B0H + op - OScanner.eql)
+      END
+    ELSE
+      push(y);
+      IF y.type = OSymTab.longType THEN
+        Emit0(0C5H)                             (* DCMP *)
+      END;
+      IF    op = OScanner.eql THEN Emit0(0A0H)  (* EQU *)
+      ELSIF op = OScanner.neq THEN Emit0(0A1H)  (* NEQ *)
+      ELSE Emit0(0B0H + op - OScanner.eql)
+      END
+    END
+  END IntRelation;
+
+  PROCEDURE RealRelation*(op: INTEGER; VAR x, y: Item);   (* x := x < y *)
+  BEGIN
+    Emit0(0D5H);                        (* FCMP *)
+    Emit0(0A0H + op - OScanner.eql);    (* EQU..GEQ *)
+    x.mode := Stacked
+  END RealRelation;
+
+  PROCEDURE StringRelation*(op: INTEGER; VAR x, y: Item);   (* x := x < y *)
+  BEGIN
+    push(y);
+    IF x.type = OSymTab.strType  (* litteral strings *)
+    THEN PushConstant(x.b)
+    ELSE PushConstant(x.type^.size)
+    END;
+    IF y.type = OSymTab.strType
+    THEN PushConstant(y.b)
+    ELSE PushConstant(y.type^.size)
+    END;
+    Emit0(0C4H);                        (* STRCMP *)
+    Emit0(0A0H + op - OScanner.eql);    (* EQU..GEQ *)
+    x.mode := Stacked
+  END StringRelation;
+
+  (* Code generation for parameters *)
+
+  PROCEDURE VarParam*(VAR x: Item; ftype: OSymTab.Type);
+    VAR xmode: INTEGER;
+  BEGIN
+    xmode := x.mode; (* save x.mode *)
+    LoadAdr(x);
+    IF (ftype.form = OSymTab.Array) & (ftype.len < 0) THEN (* formal type is open array*)
+      IF x.type.len > 0
+      THEN PushConstant(x.type.len)
+      ELSE Gen1.loadParam(x.a - 1)       (* open array size is under the array reference *)
+      END
+
+    ELSIF (ftype.form = OSymTab.Record) & (ftype.nofpar # 0) THEN (* tagged record *)
+      IF xmode = OSymTab.Indirect   (* x is itself a parameter... *)
+      THEN Gen1.loadParam(x.a - 1)       (* ... so its type tag is under the record reference *)
+      ELSIF xmode = DeRef           (* a pointer is on stack... it was asked for dereference, *)
+      THEN                          (* ... but it wasn't: we always pass record references *)
+        Emit0(20H);                 (* DUPlicate the pointer *)
+        Emit1B(EXTENDED, 33);       (* get the tag at pointer-2 *)
+      ELSE loadTypeTag(x.type)      (* otherwise type tag is statically known *)
+      END
+    END
+  END VarParam;
+
+  PROCEDURE ValueParam*(VAR x: Item; ftype: OSymTab.Type);
+  BEGIN
+    push(x);
+  END ValueParam;
+
+  (* Branches, procedure calls, procedure prolog and epilog *)
+
+  PROCEDURE Here*(): INTEGER;
+  BEGIN RETURN Gen1.pc
+  END Here;
+
+  PROCEDURE FJump*(VAR addr: INTEGER; conditional: BOOLEAN);
+(* forward jump in a list, insert addr of previous jump, it will be fixed afterwards *)
+  BEGIN Gen1.Emit1W(0E0H + ORD(conditional), addr); addr := Gen1.pc-2        (* (C)BRANCH w *)
+  END FJump;
+
+  PROCEDURE BJump*(addr: INTEGER; conditional: BOOLEAN);     (* backward jump *)
+  VAR back: INTEGER;
+  BEGIN
+    back := (Gen1.pc + 2) - addr;
+    IF back <= 255
+    THEN Emit1B(0E4H + ORD(conditional), back)                 (* (C)BRBACK n *)
+    ELSE Gen1.Emit1W(0E0H + ORD(conditional), addr - (Gen1.pc + 2))      (* (C)BRANCH w *)
+    END;
+  END BJump;
+
+  PROCEDURE EndCase*;
+  BEGIN Emit0(0CEH)  (* return *)
+  END EndCase;
+
+  PROCEDURE JumpTable*(initJump: INTEGER; table: Table);
+  VAR displacement: INTEGER;
+      i, min, max, limit : INTEGER;
+  BEGIN
+    displacement     := Gen1.pc - (initJump+1);
+    codePtr.code[initJump]   := displacement MOD 256;
+    codePtr.code[initJump+1] := displacement DIV 256;
+    min := 0; WHILE (min <= 255) & (table[min] = 0) DO INC(min) END;
+    max := 255; WHILE (max >= 0) & (table[max] = 0) DO DEC(max) END;
+    limit := max - min;
+    IF limit < 0 THEN
+      Emit1B(EXTENDED, 0)  (* DROP *)
+    ELSE
+      Emit0(0CDH);  (* TABCALL *)
+      Emit0(min);
+      Emit0(80H);   (* high bit toggled *)
+      Emit0(limit);
+      Emit0(0);
+      Gen1.EmitW(limit * 2 + 3);
+      FOR i:=min TO max DO
+        IF table[i] # 0
+        THEN Gen1.EmitW( table[i] - (Gen1.pc+1) )
+        ELSE Gen1.EmitW( (max-i)*2 + 1)
+        END
+      END
+    END
+  END JumpTable;
+
+  PROCEDURE Enter*(proc: OSymTab.Object; parblksize, locblksize: INTEGER; sizes: VarSizes);
+    VAR i : INTEGER;
+  BEGIN
+    inBody := TRUE;
+    IF NOT OScanner.suppressNames
+    THEN Gen1.emitProcName(proc.name); Gen1.EmitW(0)
+    ELSE Emit0(0FFH)        (* negative value means no name *)
+    END;
+    procAddr[proc.val] := procBase + Gen1.pc;
+    Emit1B(0D4H, 0FFH - locblksize*2); (* ENTER n, reserve locblksize*2 bytes on stack *)
+    FOR i := 2 TO locblksize+1 DO
+      IF sizes[i] # 0 THEN (* reserve space on stack for array/record variable *)
+        PushConstant(sizes[i]);
+        Emit0(0D2H);                (* RESERVE *)
+        IF i <= 11
+        THEN Emit0 (30H + i)        (* SLW2..SLW11 *)
+        ELSE Emit1B(3CH, 256 - i)   (* SLW n *)
+        END;
+      END;
+    END;
+  END Enter;
+
+  PROCEDURE Return*(form: INTEGER; VAR x: Item; size: INTEGER);
+    VAR i: INTEGER;
+  BEGIN
+    IF form # OSymTab.NoTyp THEN
+      push(x);
+      IF    x.type.size <= 2 THEN Emit1B(85H, size + 080H)      (*  FCTLEAVE *)
+      ELSIF x.type.size =  4 THEN Emit1B(86H, size + 080H)      (* DFCTLEAVE *)
+      END;
+    ELSE
+      IF size < 4
+      THEN Emit0 (88H + size)           (* LEAVE0..LEAVE3 *)
+      ELSE Emit1B(84H,  size + 080H)    (* LEAVE n *)
+      END;
+    END;
+    FOR i:=0 TO Gen1.pc-1 DO WriteByte(codePtr.code[i]) END; (* write program code *)
+    procBase := procBase + Gen1.pc;
+    Gen1.SetPC(0);                      (* empty the code buffer between two procedures *)
+    inBody   := FALSE
+  END Return;
+
+  (* In-line code procedures*)
+
+  PROCEDURE Assert*(VAR x: Item; addr: INTEGER);
+  BEGIN
+    IF x.mode = OSymTab.Const THEN
+      IF x.a = ORD(TRUE)
+      THEN Gen1.SetPC(addr) (* remove verified assertion *)
+      ELSE OScanner.Mark("Assertion fails")
+      END
+    ELSIF OScanner.check THEN Emit0(EXTENDED); Gen1.Emit1W(20, OScanner.Line()) (* ASSERT *)
+    ELSE Gen1.SetPC(addr) (* remove checks *)
+    END
+  END Assert;
+
+  (*In-line code functions*)
+
+  PROCEDURE ClearCarry*;
+  BEGIN Emit1B(EXTENDED, 26)    (* CLC *)
+  END ClearCarry;
+
+  PROCEDURE Copy*;
+  BEGIN Emit1B(EXTENDED, 14)    (* COPY *)
+  END Copy;
+
+  PROCEDURE Fill*;
+  BEGIN Emit1B(EXTENDED, 15)    (* FILL *)
+  END Fill;
+
+  PROCEDURE Scan*;
+  BEGIN Emit1B(EXTENDED, 19)    (* SCAN *)
+  END Scan;
+
+  PROCEDURE Open*(modid : OScanner.Ident);
+    VAR name: OScanner.Ident;
+        i   : INTEGER;
+  BEGIN
+    OSymTab.MakeFileName(name, modid, ".MCD");
+    codePtr := Gen1.Init();
+    Files.Create(F, name);
+    FOR i:=0 TO 7 DO WriteWord(0) END; (* header will be written afterwards *)
+  END Open;
+
+  PROCEDURE SetDataSize*(dc: INTEGER);
+  BEGIN
+    varsize := dc
+  END SetDataSize;
+
+  PROCEDURE BuildTD*(T: OSymTab.Type);
+  BEGIN typeTags[nbTypeTags] := T; INC(nbTypeTags)
+  END BuildTD;
+
+  (* header of the module's INIT/body *)
+  PROCEDURE Header*(modid: OScanner.Ident);
+    VAR i: INTEGER;
+        T, baseT: OSymTab.Type;
+  BEGIN
+    inBody := TRUE;
+    Emit0(0FFH) ; (* don't emit proc name for the INIT *)
+    procAddr[0] := procBase + Gen1.pc;
+    Emit1B(0D4H, 0FFH); (* ENTER n *)
+    (* generate code to initialize the type tags *)
+    FOR i:=0 TO nbTypeTags-1 DO
+      T := typeTags[i];
+      Emit1B(81H, varsize+2+i); (* LGA n, each tag variable contains a unique addr *)
+      Gen1.StoreGlobal(T.len);       (* T.len is the global offset of this tag *)
+    END;
+    (* now generate code to initialize the links to base types *)
+    FOR i:=0 TO nbTypeTags-1 DO
+      T := typeTags[i];
+      IF T.nofpar # 1 THEN (* root types already have their base type set to 0 *)
+        baseT := T.base;
+        IF baseT.mno = 0 THEN (* the base type is in this module too *)
+          Gen1.loadGlobal(baseT.len)
+        ELSE (* the base type in in another module *)
+          Gen1.Emit2B(83H, -1-baseT.mno, baseT.len)   (* LEA m *)
+        END;
+        Gen1.StoreGlobal(varsize+2+i);
+      END
+    END;
+    varsize := varsize + nbTypeTags;
+  END Header;
+
+  PROCEDURE Close*(modid: OScanner.Ident; key: INTEGER; varSizes: VarSizes);
+    VAR module: OSymTab.Object;
+      i, numProc, relativeAddr, modAddr : INTEGER;
+      pc, procTableAddr, nofimps, size: INTEGER;
+      orgname : OSymTab.IdentPtr;
+      initFlag: BOOLEAN;
+
+    PROCEDURE WriteModuleName(modid: OScanner.Ident);
+    VAR i: INTEGER;
+        char: CHAR;
+    BEGIN
+      i := 0;
+      REPEAT char := CAP(modid[i]); WriteByte(ORD(char)); INC(i)
+      UNTIL (i = 8) OR (char = 0X);
+      WHILE i < 8 DO WriteByte(0); INC(i) END;
+    END WriteModuleName;
+
+  BEGIN (* Close *)
+    Emit0(50H); (* HALT, leave for the module's INIT/body: HALT or LEAVE *)
+    pc := Gen1.pc;
+    FOR i:=0 TO pc-1 DO WriteByte(codePtr.code[i]) END; (* write module body code *)
+    initFlag := (pc > 4); (* more than these bytes were emitted: FF D4 FF 50 *)
+    pc := pc + procBase;
+
+    FOR i:=0 TO nbProcs DO (* write procedure table backwards *)
+      numProc      := nbProcs - i;
+      relativeAddr := procAddr[numProc] - (pc+1);
+      WriteWord(relativeAddr);
+      INC(pc, 2)
+    END; (* pc is now just after the procedure table *)
+    procTableAddr := pc - 2;
+
+    (* reserve space for imports table *)
+    module  := OSymTab.topScope.next;
+    nofimps := 0;
+    WHILE (module # NIL) & (module.class = OSymTab.Mod) DO  (* imports are the first objects*)
+      IF module.dsc # OSymTab.system THEN
+        INC(nofimps);
+        WriteWord(0);
+        INC(pc, 2)
+      END ;
+      module := module.next
+    END ;
+    modAddr := pc;
+
+    WriteWord( 0);    (* will contain the module chain link *)
+    WriteModuleName(modid);
+    WriteWord(0);    (* dummy *)
+    WriteWord(key);  (* chksum/key *)
+    WriteWord(procTableAddr); (* addr of procedure table *)
+
+    (* write module globals *)
+    WriteByte(ORD(initFlag)*4); (* init flag *)
+    WriteByte(varsize); (* nb of global variables *)
+    WriteByte(1);       (* global #1 *)
+    WriteByte(nofimps); (* number of dependencies *)
+    FOR i := 2 TO varsize+1 DO WriteWord(varSizes[i]) END;
+    Gen1.SetPC(modAddr + 20 + varsize*2);
+
+    (* write dependencies/imports section *)
+    module := OSymTab.topScope.next;
+    nofimps := 0;
+    WHILE (module # NIL) & (module.class = OSymTab.Mod) DO  (* imports are the first objects*)
+      IF module.dsc # OSymTab.system THEN
+        orgname := SYSTEM.VAL(OSymTab.IdentPtr, module.extension);
+        WriteModuleName(orgname.id);
+        INC(nofimps);
+        WriteWord(module.val);    (* checksum/key of the imported module *)
+        WriteWord(modAddr - 2 * nofimps); (* pointer location *)
+      END ;
+      module := module.next
+    END ;
+
+    (* two additional words *)
+    WriteWord(0);
+    WriteWord(0);
+
+    (* now write the header *)
+    size := INT(Files.NextPos(F));
+    Files.SetPos(F, LONG(0));
+    WriteWord(size - 16); (* file size (without the 16-bytes header) *)
+    WriteWord(modAddr - 64); (* module descriptor's start offset *)
+    WriteWord(modAddr + 16 + (varsize+2)*2); (* addr of dependencies *)
+    WriteWord(nofimps); (* number of dependencies *)
+    Files.Close(F);
+  END Close;
+
+PROCEDURE Binary*(op: INTEGER; VAR x,y: Item);
+  PROCEDURE CopyString(VAR x, y: Item);  (* x := y *)
+     VAR len: INTEGER;
+  BEGIN
+    (* assuming address of x already on stack *)
+    loadStringAdr(y);
+    len := x.type.len;
+    IF (len >= 0) & (len < y.b) THEN OScanner.Mark("string too long") END;
+    IF len >= 0 THEN PushConstant(len) ELSE Gen1.loadParam(x.a - 1) END;
+    PushConstant(y.b);
+    Emit0(31H)              (* STRCPY *)
+   END CopyString;
+BEGIN
+  CASE op OF
+  |  1 : Gen1.Index2(x,y)
+  |  2 : Gen1.Addition(x,y)
+  |  3 : Gen1.Substract(x,y)
+  |  4 : Gen1.Divide(x,y)
+  |  5 : Gen1.Modulo(x,y)
+  |  6 : (* And2 *) push(y); Gen1.fixShortBranch(x.a)
+  |  7 : (* Or2  *) push(y); Gen1.fixShortBranch(x.a)
+  |  8 : Gen1.Multiply(x,y)
+  |  9 : (* RealAdd *) push(y); Emit0(0D6H)  (* FADD *)
+  | 10 : (* RealSub *) push(y); Emit0(0D7H)  (* FSUB *)
+  | 11 : (* RealMul *) push(y); Emit0(0D8H)  (* FMUL *)
+  | 12 : (* RealDiv *) push(y); Emit0(0D9H)  (* FDIV *)
+  | 13 : Gen1.Set(x,y)
+  | 14 : Gen1.In(x,y)
+  | 15 : Gen1.Store2(x,y)
+  | 16 : Gen1.StoreStruct(x,y)
+  | 17 : CopyString(x,y)
+  | 18 : (* For0  *) Gen1.Store2(x,y)
+  | 19 : (* For1b *) push(x); Emit0(0B4H + ORD(y.a < 0))  (* ILE / IGE *)
+  | 20 : (* For2  *) Gen1.Increment(x, y)
+  | 21 : (*INC/DEC*) Gen1.Increment(x, y)
+  | 22 : PushConstant(0); Emit0(1DH)   (* SAB : PUT *)
+  | 23 : Emit1B(EXTENDED, 21)  (* ADDC *)
+  | 24 : Emit1B(EXTENDED, 22)  (* SUBC *)
+  | 25 : Emit1B(EXTENDED, 23)  (* MULC *)
+  | 26 : Emit1B(EXTENDED, 24)  (* DIVC *)
+  | 27 : Emit1B(EXTENDED, 28)  (* SYS *)
+  | 28 : Gen1.InclOrExcl(TRUE, x, y)
+  | 29 : Gen1.InclOrExcl(FALSE, x, y)
+  | 30 : (* ALLOCATE *) Emit1B(EXTENDED, 5)
+  | 31 : (*DEALLOCATE*) Emit1B(EXTENDED, 6)
+  | 32 : (* PACKLONG *)
+  END;
+END Binary;
+
+PROCEDURE Unary*(op: INTEGER; VAR x: Item);
+VAR tmp : LONGINT;
+
+  PROCEDURE Adr(VAR x: Item);
+  BEGIN
+    IF x.mode IN {OSymTab.Var, OSymTab.Indirect} THEN LoadAdr(x)
+    ELSIF (x.mode = OSymTab.Const) & (x.type.form = OSymTab.Proc) THEN push(x)
+    ELSIF (x.mode = OSymTab.Const) & (x.type.form = OSymTab.String) THEN loadStringAdr(x)
+    ELSE OScanner.Mark("not addressable")
+    END;
+    x.mode := Stacked
+  END Adr;
+
+BEGIN
+  CASE op OF
+  | 1 : (* DeRef *) push(x); x.mode := DeRef
+
+  | 2 : (* Not *)
+    IF x.mode = OSymTab.Const THEN x.a := 1 - x.a (* x.a was 0 or 1 *)
+    ELSE push(x); Emit0(0B6H)       (* NOT *)
+    END
+
+  | 3 : (* And1 *)
+    push(x);   Emit0(0DEH);    (* ANDBR *)
+    x.a := Gen1.pc; Emit0(0)   (* displacement will be fixed up *)
+
+  | 4 : (* Or1 *)
+    push(x);   Emit0(0DFH);    (* ORBR *)
+    x.a := Gen1.pc; Emit0(0)   (* displacement will be fixed up *)
+
+  | 5 : Gen1.Neg(x)
+
+  | 6 : Gen1.Singleton(x)
+
+  | 7 : (* StrToChar *)
+    IF inBody THEN Gen1.SetPC(Gen1.pc-3) END;
+    Gen1.StrToChar(x)
+
+  | 8 : (* OpenArrayParam *)
+    Gen1.LoadAdr(x);
+    IF x.type.len > 0 THEN PushConstant(x.type.len-1) ELSE Gen1.loadParam(x.a - 1) END
+
+  | 9 : (* DISPOSE *)
+    Gen1.PushConstant(x.type.base.size);
+    IF x.type.base.nofpar # 0
+    THEN Emit1B(EXTENDED, 32) (* DEALLOC of tagged record *)
+    ELSE Emit1B(EXTENDED, 6)  (* DEALLOC of non-tagged record *)
+    END
+
+  | 10 : (* StringParam *)
+    loadStringAdr(x); Gen1.PushConstant(x.b-1) (* push limit on stack too *)
+
+  | 11 : (* For1a *) Gen1.loadVar(x)
+
+  | 12 : (* CAP *) push(x); Emit1B(EXTENDED, 34)
+
+  | 13 : (* GetContent *)
+
+  | 14 : (* NEW *)
+    IF x.type.base.nofpar # 0 THEN loadTypeTag(x.type.base) END;
+    Gen1.PushConstant(x.type.base.size);
+    IF x.type.base.nofpar # 0
+    THEN Emit1B(EXTENDED, 31)   (* ALLOC of tagged record *)
+    ELSE Emit1B(EXTENDED, 5)    (* ALLOC of non-tagged record *)
+    END
+
+  | 15 : Gen1.Call(x)
+
+  | 16 : (* PrepCall *)
+
+  | 17 : Gen1.Abs(x)
+
+  | 18 : (* Odd *)
+    IF x.mode = OSymTab.Const THEN x.a := ORD(ODD(x.a))
+    ELSE push(x); Gen1.PushConstant(1); Emit0(0E8H)  (* BITAND *)
+    END
+
+  | 19 : (* Floor *)
+    push(x); Emit0(0BFH); Emit0(0BBH)    (* F2L, L2I *)
+
+  | 20 : (* Float *)
+    IF x.mode = OSymTab.Const
+    THEN
+      x.type := OSymTab.realType;
+      tmp := SYSTEM.VAL(LONGINT, FLT(x.a));
+      Emit0(8FH); Gen1.EmitW(LSW(tmp)); Gen1.EmitW(MSW(tmp)) (* LID *)
+    ELSE push(x); Emit0(0BDH); Emit0(0BEH)  (* I2L, L2F *)
+    END
+
+  | 21 : (* Ord *)
+    IF (x.mode = OSymTab.Const) & (x.type = OSymTab.strType) & (x.b = 1) THEN
+      x.type := OSymTab.byteType; x.a := ORD(codePtr.code[x.a])
+    ELSE push(x)
+    END
+
+  | 22 : Gen1.Len(x)
+
+  | 23 : (* Chr *)
+    IF x.mode = OSymTab.Const THEN x.type := OSymTab.charType
+    ELSE push(x)
+    END
+
+  | 24 : (* GET *) PushConstant(0); Emit0(0DH)   (* LAB *)
+
+  | 25 : Adr(x)
+
+  | 26 : (* CARRY *) Emit1B(EXTENDED, 25); x.mode := Stacked
+
+  | 27 : Gen1.Store1(x)
+
+  | 28 : (*commutat*) IF x.mode # OSymTab.Const THEN push(x) END
+
+  | 29 : (* arith1 *) push(x) (* non-commutative op *)
+
+  | 30 : (*relation*) IF x.mode # OSymTab.Const THEN push(x) END
+
+  | 31 : (* Index1 *) IF x.mode IN {OSymTab.Indirect,OSymTab.Var} THEN Gen1.loadVar(x) END
+
+  | 32 : (* LONG *) push(x); Emit0(0BDH)  (* I2L *)
+
+  | 33 : (* INT *) push(x); Emit0(0BBH)  (* L2I  *)
+
+  | 34 : (* MARK    *) LoadAdr(x); Emit1B(EXTENDED, 7)
+
+  | 35 : (* RELEASE *) LoadAdr(x); Emit1B(EXTENDED, 8)
+
+  | 36 : (* FREEMEM *) Emit1B(EXTENDED, 9)
+
+  | 37 : (* LSW *) push(x); Emit0(21H); Emit1B(EXTENDED, 0) (* SWAP, DROP*)
+
+  | 38 : (* MSW *) push(x); Emit1B(EXTENDED, 0)  (* DROP *)
+
+  END;
+END Unary;
+
+
+END ObnGen2.

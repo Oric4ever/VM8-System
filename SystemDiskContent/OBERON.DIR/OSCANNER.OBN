@@ -1,0 +1,536 @@
+MODULE OScanner; (* NW 19.9.93 / 15.3.2017  Scanner in Oberon-07*)
+  IMPORT Files, ComLine, Texts, SYSTEM;
+
+  (* $[+ remove procedure names *)
+  (* $O- remove overflow tests *)
+  (* $T- remove tests *)
+
+(* Oberon Scanner does lexical analysis. Input is Oberon-Text, output is
+  sequence of symbols, i.e identifiers, numbers, strings, and special symbols.
+  Recognises all Oberon keywords and skips comments. The keywords are
+  recorded in a table.
+  Get(sym) delivers next symbol from input text with Reader R.
+  Mark(msg) records error and delivers error message with Writer W.
+  If Get delivers ident, then the identifier (a string) is in variable id, if int or char
+  in ival, if real in rval, and if string in str (and slen)
+*)
+
+  CONST
+    IdLen* = 32; stringBufSize* = 256;
+
+    null* = 0;
+    (* multiplicative operators *)
+    times* = 1;
+    rdiv*  = 2;
+    div*   = 3;
+    mod*   = 4;
+    and*   = 6;
+    (* additive operators *)
+    plus*  = 7;
+    minus* = 8;
+    or*    = 9;
+    (* relational operators *)
+    eql*   = 10;
+    neq*   = 11;
+    lss*   = 12;
+    gtr*   = 13;
+    leq*   = 14;
+    geq*   = 15;
+    in*    = 16;
+    is*    = 17;
+    (* selector operators *)
+    arrow*  = 18;
+    period* = 19;
+    (* litteral strings and numbers *)
+    char*   = 20;
+    int*    = 21;
+    real*   = 22;
+    (* named constants *)
+    false*  = 23;
+    true*   = 24;
+    nil*    = 25;
+    string* = 26;
+    not*    = 27;
+    (* opening chars *)
+    lparen* = 28;
+    lbrak*  = 29;
+    lbrace* = 30;
+    (* identifiers that are not Oberon keywords *)
+    ident*  = 31;
+    (* control structures *)
+    if*     = 32;
+    while*  = 34;
+    repeat* = 35;
+    case*   = 36;
+    for*    = 37;
+    (* syntactic sugar *)
+    comma*  = 40;
+    colon*  = 41;
+    becomes*= 42;
+    upto*   = 43;
+    (* closing chars *)
+    rparen* = 44;
+    rbrak*  = 45;
+    rbrace* = 46;
+    (* syntax sugar *)
+    then*   = 47;
+    of*     = 48;
+    do*     = 49;
+    to*     = 50;
+    by*     = 51;
+    (* separators and ends *)
+    semicolon* = 52;
+    end*    = 53;
+    bar*    = 54;
+    (* other ends *)
+    else*   = 55;
+    elsif*  = 56;
+    until*  = 57;
+    return* = 58;
+    (* type constructors *)
+    array*  = 60;
+    record* = 61;
+    pointer*= 62;
+    (* declaration keywords *)
+    const*  = 63;
+    type*   = 64;
+    var*    = 65;
+    procedure* = 66;
+    begin*  = 67;
+    import* = 68;
+    module* = 69;
+    tagged* = 70;
+    (* end of file *)
+    eot*    = 71;
+
+    maxExp = 38;
+
+  TYPE Ident* = ARRAY IdLen OF CHAR;
+
+  VAR
+    token*: INTEGER; ival*: INTEGER; slen*: INTEGER;  (*results of Get*)
+    rval*: REAL;
+    id*: Ident;  (*for identifiers*)
+    str*: ARRAY stringBufSize OF CHAR;
+    errcnt*: INTEGER;
+    check*, checkOvf*, suppressNames*: BOOLEAN; (* compilation options *)
+    inName* : ARRAY 20 OF CHAR;
+
+    ch: CHAR;  (*last character read*)
+    R,err: Texts.TEXT;
+    k: INTEGER;
+
+    line, column, tokenLine, tokenColumn: INTEGER;
+    pos, errpos, tokenPos: LONGINT;
+
+  PROCEDURE NextChar;
+  CONST LF = 0AX; EOL = 1EX;
+  BEGIN
+(* IF ch = EOL THEN Out.Ln ELSE Out.Char(ch) END; *)
+    pos := pos + LONG(1); INC(column);
+    IF ch = EOL THEN ch := LF; column := 1; INC(line) END;
+    Texts.ReadChar(R, ch);
+  END NextChar;
+
+  PROCEDURE CopyId*(VAR ident: Ident);
+  BEGIN ident := id
+  END CopyId;
+
+  PROCEDURE Pos*(): LONGINT;
+  BEGIN RETURN pos
+  END Pos;
+
+  PROCEDURE Line*(): INTEGER;
+  BEGIN RETURN tokenLine
+  END Line;
+
+  PROCEDURE ShowErrPos;
+  BEGIN
+    Texts.WriteString(err,"line ");
+    Texts.WriteInt   (err, tokenLine, 4);
+    Texts.WriteString(err, " col ");
+    Texts.WriteInt   (err, tokenColumn, 3);     Texts.WriteString(err, " ERROR: ");
+    INC(errcnt); errpos := pos + LONG(4)
+  END ShowErrPos;
+
+  PROCEDURE Mark*(msg: ARRAY OF CHAR);
+  BEGIN
+    IF (pos > errpos) & (errcnt < 25) THEN
+      ShowErrPos; Texts.WriteString(err, msg); Texts.WriteLn(err)
+    END ;
+  END Mark;
+
+  PROCEDURE Missing*(sym: INTEGER);
+  BEGIN
+    IF (pos > errpos) & (errcnt < 25) THEN
+      ShowErrPos;
+      IF sym # ident THEN Texts.WriteChar(err, "'") END;
+      CASE sym OF
+      | eql      : Texts.WriteChar  (err, "=")
+      | period   : Texts.WriteChar  (err, ".")
+      | ident    : Texts.WriteString(err, "identifier")
+      | comma    : Texts.WriteChar  (err, ",")
+      | colon    : Texts.WriteChar  (err, ":")
+      | becomes  : Texts.WriteString(err, ":=")
+      | rparen   : Texts.WriteChar  (err, ")")
+      | rbrak    : Texts.WriteChar  (err, "]")
+      | rbrace   : Texts.WriteChar  (err, "}")
+      | then     : Texts.WriteString(err, "THEN")
+      | of       : Texts.WriteString(err, "OF")
+      | do       : Texts.WriteString(err, "DO")
+      | to       : Texts.WriteString(err, "TO")
+      | semicolon: Texts.WriteChar  (err, ";")
+      | end      : Texts.WriteString(err, "END")
+      | until    : Texts.WriteString(err, "UNTIL")
+      | record   : Texts.WriteString(err, "RECORD")
+      | begin    : Texts.WriteString(err, "BEGIN")
+      | module   : Texts.WriteString(err, "MODULE")
+      END;
+      IF sym # ident THEN Texts.WriteChar(err, "'") END;
+      Texts.WriteString(err, " expected");
+      Texts.WriteLn(err)
+    END;
+  END Missing;
+
+
+  PROCEDURE Identifier(VAR symb: INTEGER);
+    VAR len, sym: INTEGER;
+  BEGIN
+    sym := ident;
+    len := 0;
+    REPEAT
+      IF len < IdLen-1 THEN id[len] := ch; INC(len) END ;
+      NextChar
+    UNTIL (ch < "0") OR (ch > "9") & (ch < "A") OR (ch > "Z") & (ch < "a") OR (ch > "z");
+    id[len] := 0X;
+    IF len = 2 THEN
+      IF    id = "IF" THEN sym := if
+      ELSIF id = "DO" THEN sym := do
+      ELSIF id = "OR" THEN sym := or
+      ELSIF id = "OF" THEN sym := of
+      ELSIF id = "TO" THEN sym := to
+      ELSIF id = "IN" THEN sym := in
+      ELSIF id = "IS" THEN sym := is
+      ELSIF id = "BY" THEN sym := by
+      END
+    ELSIF len = 3 THEN
+      IF    id = "END" THEN sym := end
+      ELSIF id = "NIL" THEN sym := nil
+      ELSIF id = "VAR" THEN sym := var
+      ELSIF id = "AND" THEN sym := and
+      ELSIF id = "NOT" THEN sym := not
+      ELSIF id = "DIV" THEN sym := div
+      ELSIF id = "MOD" THEN sym := mod
+      ELSIF id = "FOR" THEN sym := for
+      END
+    ELSIF len = 4 THEN
+      IF    id = "ELSE" THEN sym := else
+      ELSIF id = "THEN" THEN sym := then
+      ELSIF id = "TRUE" THEN sym := true
+      ELSIF id = "TYPE" THEN sym := type
+      ELSIF id = "CASE" THEN sym := case
+      END
+    ELSIF len = 5 THEN
+      IF    id = "ELSIF" THEN sym := elsif
+      ELSIF id = "FALSE" THEN sym := false
+      ELSIF id = "ARRAY" THEN sym := array
+      ELSIF id = "BEGIN" THEN sym := begin
+      ELSIF id = "CONST" THEN sym := const
+      ELSIF id = "UNTIL" THEN sym := until
+      ELSIF id = "WHILE" THEN sym := while
+      END
+    ELSIF len = 6 THEN
+      IF    id = "RECORD" THEN sym := record
+      ELSIF id = "REPEAT" THEN sym := repeat
+      ELSIF id = "RETURN" THEN sym := return
+      ELSIF id = "IMPORT" THEN sym := import
+      ELSIF id = "MODULE" THEN sym := module
+      ELSIF id = "TAGGED" THEN sym := tagged
+      END
+    ELSIF len = 7 THEN
+      IF    id = "POINTER" THEN sym := pointer
+      END
+    ELSIF len = 9 THEN
+      IF    id = "PROCEDURE" THEN sym := procedure
+      END
+    END;
+    symb := sym
+  END Identifier;
+
+  PROCEDURE String(delimiter: CHAR);
+  BEGIN
+    slen := 0; NextChar;
+    WHILE (NOT Texts.EOT(R)) & (ch # delimiter) DO
+      IF ch >= " " THEN
+        IF slen < stringBufSize THEN str[slen] := ch; INC(slen) ELSE Mark("string too long") END ;
+      END ;
+      NextChar
+    END ;
+    NextChar;
+  END String;
+
+  PROCEDURE HexString;
+    VAR i, m, n: INTEGER;
+  BEGIN i := 0; NextChar;
+    WHILE (NOT Texts.EOT(R)) & (ch # "$") DO
+      WHILE (NOT Texts.EOT(R))  & (ch <= " ") DO NextChar END ;  (*skip*)
+      IF ("0" <= ch) & (ch <= "9") THEN m := ORD(ch) - 30H
+      ELSIF ("A" <= ch) & (ch <= "F") THEN m := ORD(ch) - 37H
+      ELSE m := 0; Mark("hexdig expected")
+      END ;
+      NextChar;
+      IF ("0" <= ch) & (ch <= "9") THEN n := ORD(ch) - 30H
+      ELSIF ("A" <= ch) & (ch <= "F") THEN n := ORD(ch) - 37H
+      ELSE n := 0; Mark("hexdig expected")
+      END ;
+      IF i < stringBufSize THEN str[i] := CHR(m*10H + n); INC(i) ELSE Mark("string too long") END ;
+      NextChar
+    END ;
+    NextChar; slen := i  (*no 0X appended!*)
+  END HexString;
+
+  PROCEDURE Ten(e: INTEGER): REAL;
+    VAR x, t: REAL;
+  BEGIN x := 1.0; t := 10.0;
+    WHILE e > 0 DO
+      IF ODD(e) THEN x := t * x END ;
+      t := t * t; e := e DIV 2
+    END ;
+    RETURN x
+  END Ten;
+
+  PROCEDURE Number(VAR sym: INTEGER);
+    CONST max = 32767;
+    VAR i, h, n, e, s: INTEGER;
+        k: INTEGER;
+        x: REAL;
+        d: ARRAY 10 OF BYTE;
+      negE: BOOLEAN;
+  BEGIN
+    ival := 0; i := 0; n := 0; k := 0;
+    REPEAT
+      IF n < 10 THEN d[n] := ORD(ch)-30H; INC(n) ELSE Mark("too many digits"); n := 0 END ;
+      NextChar
+    UNTIL (ch < "0") OR (ch > "9") & (ch < "A") OR (ch > "F");
+    IF (ch = "H") OR (ch = "R") OR (ch = "X") THEN  (*hex*)
+      REPEAT
+        h := d[i]; IF h >= 10 THEN h := h-7 END ;
+        k := k*16 + h; (*no overflow check*)
+        INC(i)
+      UNTIL i = n;
+      IF ch = "X" THEN sym := string; slen := 1;
+        IF k <= 255 THEN str[0] := CHR(k) ELSE Mark("illegal value") END
+      ELSIF ch = "R" THEN sym := real;
+        rval := FLT(k);
+      ELSE sym := int; ival := k
+      END ;
+      NextChar
+    ELSIF ch = "." THEN
+      NextChar;
+      IF ch = "." THEN (*double dot*) ch := 0FFX;
+        (*decimal integer*)
+        REPEAT
+          IF d[i] < 10 THEN
+            IF k <= (max - d[i]) DIV 10
+            THEN k := k * 10 + d[i]
+            ELSE Mark("too large"); k := 0
+            END
+          ELSE Mark("bad integer")
+          END ;
+          INC(i)
+        UNTIL i = n;
+        sym := int; ival := k
+      ELSE (*real number*) x := 0.0; e := 0;
+        REPEAT  (*integer part*) x := x * 10.0 + FLT(d[i]); INC(i) UNTIL i = n;
+        WHILE (ch >= "0") & (ch <= "9") DO  (*fraction*)
+          x := x * 10.0 + FLT(ORD(ch) - 30H); DEC(e); NextChar
+        END ;
+        IF (ch = "E") OR (ch = "D") THEN  (*scale factor*)
+          NextChar; s := 0;
+          IF ch = "-" THEN negE := TRUE; NextChar
+          ELSE negE := FALSE;
+            IF ch = "+" THEN NextChar END
+          END ;
+          IF (ch >= "0") & (ch <= "9") THEN
+            REPEAT s := s*10 + ORD(ch) - 30H; NextChar
+            UNTIL (ch < "0") OR (ch >"9");
+            IF negE THEN e := e-s ELSE e := e+s END
+          ELSE Mark("digit?")
+          END
+        END ;
+        IF e < 0 THEN
+          IF e >= -maxExp THEN x := x / Ten(-e) ELSE x := 0.0 END
+        ELSIF e > 0 THEN
+          IF e <= maxExp THEN x := Ten(e) * x ELSE x := 0.0; Mark("too large") END
+        END ;
+        sym := real; rval := x;
+      END
+    ELSE  (*decimal integer*)
+      REPEAT
+        IF d[i] < 10 THEN
+          IF k <= (max - d[i]) DIV 10 THEN k := k*10 + d[i]
+          ELSE Mark("too large"); k := 0
+          END
+        ELSE Mark("bad integer")
+        END ;
+        INC(i)
+      UNTIL i = n;
+      sym := int; ival := k
+    END
+  END Number;
+
+  PROCEDURE comment;
+  VAR option: CHAR;
+      onOff : BOOLEAN;
+  BEGIN
+    REPEAT NextChar UNTIL Texts.EOT(R) OR (ch # " ");
+    IF ch = "$" THEN
+      NextChar; option := ch; NextChar; onOff := (ch = "+"); NextChar;
+      IF    option = "T" THEN check     := onOff
+      ELSIF option = "O" THEN checkOvf  := onOff
+      ELSIF option = "[" THEN suppressNames := onOff
+      END
+    END;
+    REPEAT
+      WHILE (NOT Texts.EOT(R)) & (ch # "*") DO
+        IF ch = "(" THEN NextChar;
+          IF ch = "*" THEN comment END
+        ELSE NextChar
+        END
+      END ;
+      WHILE ch = "*" DO NextChar END
+    UNTIL (ch = ")") OR Texts.EOT(R);
+    IF NOT Texts.EOT(R) THEN NextChar ELSE Mark("unterminated comment") END
+  END comment;
+
+  PROCEDURE Get*(VAR sym: INTEGER);
+  BEGIN
+    REPEAT
+      WHILE (NOT Texts.EOT(R)) & (ch <= " ") DO NextChar END;
+      tokenLine := line; tokenColumn := column; tokenPos := pos;
+      IF Texts.EOT(R) THEN token := eot
+      ELSIF ch < "A" THEN
+        IF ch < "0" THEN
+          IF   (ch = '"') OR (ch = "'") THEN String(ch); token := string
+          ELSIF ch = "#" THEN NextChar; token := neq
+          ELSIF ch = "$" THEN HexString; token := string
+          ELSIF ch = "&" THEN NextChar; token := and
+          ELSIF ch = "(" THEN
+            NextChar;
+            IF  ch = "*" THEN token := null; comment ELSE token := lparen END
+          ELSIF ch = ")" THEN NextChar; token := rparen
+          ELSIF ch = "*" THEN NextChar; token := times
+          ELSIF ch = "+" THEN NextChar; token := plus
+          ELSIF ch = "," THEN NextChar; token := comma
+          ELSIF ch = "-" THEN NextChar; token := minus
+          ELSIF ch = "." THEN
+            NextChar;
+            IF  ch = "." THEN NextChar; token := upto ELSE token := period END
+          ELSIF ch = "/" THEN NextChar; token := rdiv
+          ELSE NextChar; (* ! % ' *) token := null
+          END
+        ELSIF ch < ":" THEN Number(token)
+        ELSIF ch = ":" THEN
+          NextChar;
+          IF  ch = "=" THEN NextChar; token := becomes ELSE token := colon END
+        ELSIF ch = ";" THEN NextChar; token := semicolon
+        ELSIF ch = "<" THEN
+          NextChar;
+          IF  ch = "=" THEN NextChar; token := leq ELSE token := lss END
+        ELSIF ch = "=" THEN NextChar; token := eql
+        ELSIF ch = ">" THEN
+          NextChar;
+          IF  ch = "=" THEN NextChar; token := geq ELSE token := gtr END
+        ELSE (* ? @ *) NextChar; token := null
+        END
+      ELSIF   ch < "[" THEN Identifier(token)
+      ELSIF   ch < "a" THEN
+        IF    ch = "[" THEN token := lbrak
+        ELSIF ch = "]" THEN  token := rbrak
+        ELSIF ch = "^" THEN token := arrow
+        ELSE (* _ ` *) token := null
+        END ;
+        NextChar
+      ELSIF   ch < "{" THEN Identifier(token)
+      ELSE
+        IF    ch = "{"  THEN token := lbrace
+        ELSIF ch = "}"  THEN token := rbrace
+        ELSIF ch = "|"  THEN token := bar
+        ELSIF ch = "~"  THEN token := not
+        ELSIF ch = 0FFX THEN token := upto
+        ELSE token := null
+        END ;
+        NextChar
+      END
+    UNTIL token # null;
+    sym := token
+  END Get;
+
+  PROCEDURE CheckExport*(level: INTEGER; VAR expo: BOOLEAN);
+  BEGIN
+    IF token = times THEN
+      expo := TRUE; Get(token);
+      IF level # 0 THEN Mark("remove asterisk") END
+    ELSE expo := FALSE
+    END
+  END CheckExport;
+
+  PROCEDURE Expect*(s: INTEGER);
+  BEGIN
+    IF token = s THEN Get(token) ELSE Missing(s) END
+  END Expect;
+
+  PROCEDURE Init*(): BOOLEAN;
+    VAR i: INTEGER;
+      modname, filename: ARRAY 20 OF CHAR;
+      success : BOOLEAN;
+
+    PROCEDURE addExtension(VAR name: ARRAY OF CHAR; ext: ARRAY OF CHAR; forceExt: BOOLEAN);
+      VAR i: INTEGER;
+    BEGIN
+      i := 0;
+      WHILE (i<LEN(name)) & (name[i] # '.') & (name[i] # ' ') & (name[i] # 0X) DO INC(i) END;
+      IF i > 8 THEN i := 8 END;
+      IF (name[i] # '.') OR forceExt THEN
+        name[i+0] := '.';
+        name[i+1] := ext[0];
+        name[i+2] := ext[1];
+        name[i+3] := ext[2];
+        name[i+4] := 0X;
+      END;
+    END addExtension;
+
+  BEGIN
+    check := TRUE; checkOvf := TRUE; (* safer compilation options by default *)
+    suppressNames := TRUE; (* remove procedure names, save 5 bytes per procedure *)
+    line := 1; column := 1; errcnt  := 0;
+(*    IF ComLine.inName[0] # 0X
+    THEN inName := ComLine.inName
+    ELSE
+ *)
+     ComLine.PromptFor("Module to compile: ", modname);
+(*
+    END;
+ *)
+    inName := modname;
+    addExtension(inName, "OBN", FALSE);
+    success  := Texts.OpenText(R, inName);
+    IF success THEN
+      Texts.ReadChar(R, ch); (* read first char *)
+      filename := modname; addExtension(filename, "ERR", TRUE);
+      Texts.CreateText(err, filename);
+    END;
+    RETURN success
+  END Init;
+
+  PROCEDURE Close*();
+  VAR errfile: Files.FILE;
+  BEGIN
+    IF errcnt # 0 THEN Texts.CloseText(err)
+    ELSE
+      errfile := Texts.TextFile(err);
+      Files.Delete(errfile)
+    END
+  END Close;
+
+END OScanner.

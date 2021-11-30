@@ -1,0 +1,1357 @@
+MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
+  IMPORT SYSTEM, Out, ComLine, OScanner, OSymTab, OGenCode := ObnGen2;
+  (*Author: Niklaus Wirth, 2014.
+    Parser of Oberon compiler. Uses Scanner to obtain symbols (tokens),
+    SymTab for definition of data structures and for handling import and export, and
+    GenCode to produce binary code. Parser performs type checking and data allocation.
+    Parser is target-independent, except for part of the handling of allocations.*)
+
+(* $[+ remove procedure names *)
+(* $O- remove overflow checks *)
+(* $T- remove tests *)
+
+  CONST
+    DEBUG = TRUE;
+
+    (* Unary gencode ops *)
+    DeRef=1; Not=2; And1=3; Or1=4; Neg=5; Singleton=6; StrToChar=7;
+    OpenArrayParam=8; Dispose=9; StringParam=10; For1a=11; Cap=12;
+    GetContent=13; New=14; Call=15; PrepCall=16; Abs=17; Odd=18; Floor=19;
+    Float=20; Ord=21; Len=22; Chr=23; Get=24; Adr=25; GetCarry=26;
+    Store1=27; Commut1=28; Expr1=29; Relation1=30; Index1=31; Int2Long=32; Long2Int=33;
+    Mark=34; Release=35; FreeMem=36; Lsw=37; Msw=38;
+
+    (* Binary gencode ops *)
+    Index2=1; Add2=2; Sub2=3; Div2=4; Mod2=5; And2=6; Or2=7; Mul2=8;
+    RealAdd2=9; RealSub2=10; RealMul2=11; RealDiv2=12; Range=13; In=14; Store2=15;
+    StoreStruct=16; CopyString=17; For0=18; For1b=19; For2=20; Increment=21; Put=22;
+    ADDC=23; SUBC=24; MULC=25; DIVC=26; SYS=27;
+    Include=28; Exclude=29; Allocate=30; Dealloc=31; PackLong=32;
+
+  TYPE
+    PtrBase     = POINTER TO PtrBaseDesc;
+    PtrBaseDesc = RECORD  (*list of names of pointer base types*)
+      name: OScanner.Ident; type: OSymTab.Type; next: PtrBase
+    END ;
+
+  VAR
+    sym  : INTEGER; (* last symbol read*)
+    dc   : INTEGER; (* data counter*)
+    level: INTEGER; (* procedure level *)
+    expressionProc: PROCEDURE (VAR x   : OGenCode.Item);  (*to avoid forward reference*)
+    TypeProc      : PROCEDURE (VAR type: OSymTab.Type);
+    newSF  : BOOLEAN;           (* option flag*)
+    modid  : OScanner.Ident;    (* module name *)
+    pbsList: PtrBase;           (* list of names of pointer base types*)
+    dummy  : OSymTab.Object;
+
+  PROCEDURE NextToken; BEGIN OScanner.Get(sym) END NextToken;
+
+  PROCEDURE Expect(s: INTEGER);
+  BEGIN
+    IF sym = s THEN NextToken ELSE OScanner.Missing(s) END
+  END Expect;
+
+  PROCEDURE qualident(VAR obj: OSymTab.Object);
+  BEGIN
+    obj := OSymTab.thisObj(); NextToken;
+    IF obj = NIL THEN OScanner.Mark("undef"); obj := dummy END ;
+    IF (sym = OScanner.period) & (obj.class = OSymTab.Mod) THEN
+      NextToken;
+      IF sym = OScanner.ident THEN obj := OSymTab.thisimport(obj); NextToken;
+        IF obj = NIL THEN OScanner.Mark("undef"); obj := dummy END
+      ELSE OScanner.Missing(OScanner.ident); obj := dummy
+      END
+    END
+  END qualident;
+
+  PROCEDURE CheckBool(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.type.form # OSymTab.Bool THEN OScanner.Mark("not Boolean"); x.type := OSymTab.boolType END
+  END CheckBool;
+
+  PROCEDURE CheckInt(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.type.form # OSymTab.Int THEN OScanner.Mark("not Integer"); x.type := OSymTab.intType END
+  END CheckInt;
+
+  PROCEDURE CheckLong(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.type.form # OSymTab.Long THEN OScanner.Mark("not LongInt"); x.type := OSymTab.longType END
+  END CheckLong;
+
+  PROCEDURE CheckReal(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.type.form # OSymTab.Real THEN OScanner.Mark("not Real"); x.type := OSymTab.realType END
+  END CheckReal;
+
+  PROCEDURE CheckSet(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.type.form # OSymTab.Set THEN OScanner.Mark("not Set"); x.type := OSymTab.setType END 
+  END CheckSet;
+
+  PROCEDURE CheckSetVal(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.type.form # OSymTab.Int THEN OScanner.Mark("not Int"); x.type := OSymTab.setType
+    ELSIF x.mode = OSymTab.Const THEN
+      IF (x.a < 0) OR (x.a > 15) THEN OScanner.Mark("invalid set") END
+    END 
+  END CheckSetVal;
+
+  PROCEDURE CheckConst(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.mode # OSymTab.Const THEN OScanner.Mark("not a constant"); x.mode := OSymTab.Const END
+  END CheckConst;
+
+  PROCEDURE CheckWritable(VAR x: OGenCode.Item);
+  BEGIN
+    IF x.rdo THEN OScanner.Mark("read-only") END
+  END CheckWritable;
+
+  PROCEDURE CheckExport(VAR expo: BOOLEAN);
+  BEGIN
+    IF sym = OScanner.times THEN
+      expo := TRUE; NextToken;
+      IF level # 0 THEN OScanner.Mark("remove asterisk") END
+    ELSE expo := FALSE
+    END
+  END CheckExport;
+
+  PROCEDURE IsExtension(t0, t1: OSymTab.Type): BOOLEAN;
+  BEGIN (*t1 is an extension of t0*)
+    RETURN (t0 = t1) OR (t1 # NIL) & IsExtension(t0, t1.base)
+  END IsExtension;
+
+  (* expressions *)
+
+  (* check that T is one of x's base types *)
+  PROCEDURE TypeTest(VAR x: OGenCode.Item; T: OSymTab.Type; guard: BOOLEAN);
+    VAR xt: OSymTab.Type;
+  BEGIN
+    xt := x.type;
+    IF (T.form = xt.form )
+    & ((T.form = OSymTab.Pointer) OR
+       (T.form = OSymTab.Record) & (x.mode = OSymTab.Indirect)) THEN
+      WHILE (xt # T) & (xt # NIL) DO xt := xt.base END ;
+      IF xt = NIL THEN (* T not found in base types *)
+        xt := x.type; (* return to x's type *)
+        IF xt.form = OSymTab.Pointer THEN
+          IF IsExtension(xt.base, T.base) THEN OGenCode.TypeTest(x, T.base, FALSE, guard); x.type := T
+          ELSE OScanner.Mark("not an extension")
+          END
+        ELSIF (xt.form = OSymTab.Record) & (x.mode = OSymTab.Indirect) THEN
+          IF IsExtension(xt, T) THEN OGenCode.TypeTest(x, T, TRUE, guard); x.type := T
+          ELSE OScanner.Mark("not an extension")
+          END
+        ELSE OScanner.Mark("incompatible types")
+        END
+      ELSIF ~guard THEN
+        OGenCode.TypeTest(x, NIL, FALSE, FALSE)
+      END
+    ELSE OScanner.Mark("type mismatch")
+    END ;
+    IF ~guard THEN x.type := OSymTab.boolType END
+  END TypeTest;
+
+  PROCEDURE selector(VAR x: OGenCode.Item);
+    VAR y: OGenCode.Item; obj: OSymTab.Object;
+  BEGIN
+    WHILE (sym = OScanner.lbrak)    (* array index *)
+       OR (sym = OScanner.period)   (* record field *)
+       OR (sym = OScanner.arrow)    (* pointer dereferencement *)
+       OR (sym = OScanner.lparen) & (x.type.form IN {OSymTab.Record, OSymTab.Pointer}) (* type guard *)
+    DO
+      IF sym = OScanner.lbrak THEN
+        REPEAT
+          OGenCode.Unary(Index1, x);
+          NextToken; expressionProc(y);
+          IF x.type.form = OSymTab.Array THEN
+            CheckInt(y); OGenCode.Binary(Index2, x, y); x.type := x.type.base
+          ELSE OScanner.Mark("not an array")
+          END
+        UNTIL sym # OScanner.comma;
+        Expect(OScanner.rbrak)
+      ELSIF sym = OScanner.period THEN NextToken;
+        IF sym = OScanner.ident THEN
+          IF x.type.form = OSymTab.Pointer THEN
+            OGenCode.Unary(DeRef, x);
+            x.type := x.type.base
+          END ;
+          IF x.type.form = OSymTab.Record THEN
+            obj := OSymTab.thisfield(x.type); NextToken;
+            IF obj # NIL THEN OGenCode.Field(x, obj); x.type := obj.type
+            ELSE OScanner.Mark("undef")
+            END
+          ELSE OScanner.Mark("not a record")
+          END
+        ELSE OScanner.Missing(OScanner.ident)
+        END
+      ELSIF sym = OScanner.arrow THEN
+        NextToken;
+        IF x.type.form = OSymTab.Pointer THEN
+          OGenCode.Unary(DeRef, x);
+          x.type := x.type.base
+        ELSE OScanner.Mark("not a pointer")
+        END
+      ELSIF (sym = OScanner.lparen) & (x.type.form IN {OSymTab.Record, OSymTab.Pointer}) THEN (*type guard*)
+        NextToken;
+        IF sym = OScanner.ident THEN
+          qualident(obj);
+          IF obj.class = OSymTab.Typ THEN TypeTest(x, obj.type, TRUE)
+          ELSE OScanner.Mark("guard type expected")
+          END
+        ELSE OScanner.Missing(OScanner.ident)
+        END ;
+        Expect(OScanner.rparen)
+      END
+    END
+  END selector;
+
+  PROCEDURE EqualSignatures(t0, t1: OSymTab.Type): BOOLEAN;
+    VAR p0, p1: OSymTab.Object; com: BOOLEAN;
+  BEGIN com := TRUE;
+    IF (t0.base = t1.base) & (t0.nofpar = t1.nofpar) THEN
+      p0 := t0.dsc; p1 := t1.dsc;
+      WHILE p0 # NIL DO
+        IF (p0.class = p1.class)
+        &  (p0.rdo   = p1.rdo)
+        &  ((p0.type = p1.type)
+         OR (p0.type.form = OSymTab.Array)
+          & (p1.type.form = OSymTab.Array)
+          & (p0.type.len  = p1.type.len)
+          & (p0.type.base = p1.type.base)
+         OR (p0.type.form = OSymTab.Proc)
+          & (p1.type.form = OSymTab.Proc)
+          & EqualSignatures(p0.type, p1.type))
+        THEN p0 := p0.next; p1 := p1.next
+        ELSE p0 := NIL; com := FALSE
+        END
+      END
+    ELSE com := FALSE
+    END ;
+    RETURN com
+  END EqualSignatures;
+
+  (* check for assignment compatibility *)
+  PROCEDURE CompTypes(t0, t1: OSymTab.Type; varpar: BOOLEAN): BOOLEAN;
+  BEGIN
+    RETURN (t0 = t1)
+
+      OR   (t0.form = OSymTab.Array)
+         & (t1.form = OSymTab.Array)
+         & (t0.base = t1.base)
+         & (t0.len  = t1.len)         (* NB: openarray assignment disallowed in ORG *)
+
+      OR   (t0.form = OSymTab.Record)
+         & (   (t1.form = OSymTab.Record)  & IsExtension(t0, t1)
+            OR (t1.form = OSymTab.Pointer) & IsExtension(t0, t1.base)
+           )
+
+      OR   (t0.form = OSymTab.Pointer) (* FF: allowed this even for VAR params, why not? *)
+         & (t1.form = OSymTab.Pointer)
+         & IsExtension(t0.base, t1.base)
+
+      OR   ~varpar
+        & (
+             (t0.form = OSymTab.Proc)
+           & (t1.form = OSymTab.Proc)
+           & EqualSignatures(t0, t1)
+
+          OR (t0.form IN {OSymTab.Pointer, OSymTab.Proc})
+           & (t1.form = OSymTab.NilTyp))
+  END CompTypes;
+
+  PROCEDURE ParamList(VAR x: OGenCode.Item);
+    VAR n: INTEGER; par: OSymTab.Object;
+
+    PROCEDURE Parameter(par: OSymTab.Object);
+      VAR x: OGenCode.Item; varpar: BOOLEAN;
+    BEGIN
+      expressionProc(x);
+      IF par # NIL THEN
+        varpar := par.class = OSymTab.Indirect;
+
+        IF CompTypes(par.type, x.type, varpar) THEN
+          IF NOT varpar OR (par.type.form = OSymTab.Record)
+                           & (x.type.form = OSymTab.Pointer)
+          THEN OGenCode.ValueParam(x, par.type)
+          ELSE (* par.class = Indirect *)
+            IF NOT par.rdo THEN CheckWritable(x) END ;
+            OGenCode.VarParam(x, par.type)
+          END
+
+        ELSIF (x.type.form = OSymTab.Array) & (par.type.form = OSymTab.Array) &
+              (x.type.base = par.type.base) & (par.type.len < 0) THEN
+          IF NOT par.rdo THEN CheckWritable(x) END ;
+          OGenCode.Unary(OpenArrayParam, x)
+
+        ELSIF (x.type.form = OSymTab.String) & varpar & par.rdo &
+            (par.type.form = OSymTab.Array) &
+            (par.type.base.form = OSymTab.Char) & (par.type.len < 0) THEN
+          OGenCode.Unary(StringParam, x)
+
+        ELSIF (par.type.form = OSymTab.Int) & (x.type.form = OSymTab.Int) & NOT(varpar) THEN
+          OGenCode.ValueParam(x, par.type)  (*BYTE*)
+
+        ELSIF (x.type.form = OSymTab.String) & (x.b = 1) &
+              (par.class = OSymTab.Var) & (par.type.form = OSymTab.Char) THEN (* 1-char STRING *)
+          OGenCode.Unary(StrToChar, x);
+          OGenCode.ValueParam(x, par.type)
+
+        ELSIF (par.type.form = OSymTab.Array) & (par.type.base = OSymTab.byteType) &
+            (par.type.len >= 0) & (par.type.size = x.type.size) THEN (* ARRAY n OF BYTE *)
+          OGenCode.VarParam(x, par.type)
+  
+        ELSE OScanner.Mark("incompatible parameters")
+        END
+      END
+    END Parameter;
+
+  BEGIN (* ParamList *)
+    par := x.type.dsc; n := 0;
+    IF sym # OScanner.rparen THEN
+      Parameter(par); n := 1;
+      WHILE sym <= OScanner.comma DO
+        Expect(OScanner.comma);
+        IF par # NIL THEN par := par.next END ;
+        INC(n); Parameter(par)
+      END ;
+      Expect(OScanner.rparen)
+    ELSE NextToken;
+    END ;
+    IF n < x.type.nofpar THEN OScanner.Mark("too few params")
+    ELSIF n > x.type.nofpar THEN OScanner.Mark("too many params")
+    END
+  END ParamList;
+
+  PROCEDURE expression(VAR x: OGenCode.Item);
+    VAR y: OGenCode.Item; obj: OSymTab.Object; rel, xf, yf: INTEGER;
+
+    PROCEDURE StandFunc(VAR x: OGenCode.Item; fct: INTEGER; restyp: OSymTab.Type);
+      VAR y: OGenCode.Item; n, npar: INTEGER;
+    BEGIN
+      Expect(OScanner.lparen);
+      npar := fct MOD 10; fct := fct DIV 10;
+      n := 0;
+      IF npar >= 1 THEN
+        expression(x); (* functions of 2+ params have params by value, except VAL *)
+        IF (npar >= 2) & (fct # 15) THEN OGenCode.ValueParam(x, OSymTab.intType) END;
+        n := 1;
+        WHILE sym = OScanner.comma DO
+          NextToken;
+          expression(y); OGenCode.ValueParam(y, OSymTab.intType);
+          INC(n)
+        END ;
+      END;
+      Expect(OScanner.rparen);
+      IF (n = npar) OR (fct = 7) & (n = 1) THEN
+        IF fct = 0 THEN (*ABS*)
+          IF x.type.form IN {OSymTab.Int, OSymTab.Long, OSymTab.Real}
+          THEN OGenCode.Unary(Abs, x); restyp := x.type
+          ELSE OScanner.Mark("bad type")
+          END
+        ELSIF fct = 1 THEN (* ODD *) CheckInt (x); OGenCode.Unary(Odd, x)
+        ELSIF fct = 2 THEN (*FLOOR*) CheckReal(x); OGenCode.Unary(Floor, x)
+        ELSIF fct = 3 THEN (* FLT *) CheckInt (x); OGenCode.Unary(Float, x)
+        ELSIF fct = 4 THEN (*ORD*)
+          IF x.type.form <= OSymTab.Proc THEN OGenCode.Unary(Ord, x)
+          ELSIF (x.type.form = OSymTab.String) & (x.b = 1) THEN OGenCode.Unary(StrToChar, x)
+          ELSE OScanner.Mark("bad type")
+          END
+        ELSIF fct = 5 THEN (* CHR *) CheckInt (x); OGenCode.Unary(Chr, x)
+        ELSIF fct = 6 THEN (*LEN*)
+            IF x.type.form = OSymTab.Array THEN OGenCode.Unary(Len, x) ELSE OScanner.Mark("not an array") END
+        ELSIF fct = 7 THEN (* LONG*)
+          CheckInt(x);
+          IF    n = 1 THEN  OGenCode.Unary (ORD(Int2Long), x)
+          ELSE CheckInt(y); OGenCode.Binary(PackLong, x, y)
+          END
+        ELSIF fct = 8 THEN (* INT *) CheckLong(x); OGenCode.Unary(Long2Int, x)
+  (*
+        ELSIF fct IN {7, 8, 9} THEN (*LSL, ASR, ROR*) CheckInt(y);
+          IF x.type.form IN {OSymTab.Int, OSymTab.Set} THEN OGenCode.Shift(fct-7, x, y); restyp := x.type ELSE OScanner.Mark("bad type") END
+  *)
+        ELSIF fct = 10 THEN (*CARRY*) OGenCode.Unary (ORD(GetCarry), x)
+        ELSIF fct = 11 THEN (* ADDC*) OGenCode.Binary(ADDC, x, y)
+        ELSIF fct = 12 THEN (* SUBC*) OGenCode.Binary(SUBC, x, y)
+        ELSIF fct = 13 THEN (* MULC*) OGenCode.Binary(MULC, x, y)
+        ELSIF fct = 14 THEN (* DIVC*) OGenCode.Binary(DIVC, x, y)
+        ELSIF fct = 15 THEN (* VAL *)
+          IF (x.mode= OSymTab.Typ) & (x.type.size <= y.type.size) THEN restyp := x.type; x := y
+          ELSE OScanner.Mark("casting not allowed")
+          END
+        ELSIF fct = 16 THEN (* ADR *) OGenCode.Unary(Adr, x)
+        ELSIF fct = 17 THEN (* SIZE*)
+          IF x.mode = OSymTab.Typ THEN OGenCode.MakeConstItem(x, OSymTab.intType, x.type.size)
+          ELSE OScanner.Mark("must be a type")
+          END
+        ELSIF fct = 18 THEN (* SYS *) OGenCode.Binary(SYS, x, y)
+        ELSIF fct = 19 THEN (* GET *) OGenCode.Unary (ORD(Get), x)
+        ELSIF fct = 20 THEN (* FREEMEM *) OGenCode.Unary (ORD(FreeMem), x)
+        ELSIF fct = 21 THEN (* LSW *) CheckLong(x); OGenCode.Unary(Lsw, x)
+        ELSIF fct = 22 THEN (* MSW *) CheckLong(x); OGenCode.Unary(Msw, x)
+        ELSIF fct = 23 THEN (* SCAN *) OGenCode.Scan
+        ELSIF fct = 24 THEN (* CAP *)
+          IF (x.type.form = OSymTab.String) & (x.b = 1) THEN OGenCode.Unary(StrToChar,x) END;
+          IF x.type = OSymTab.charType THEN OGenCode.Unary(Cap, x)
+          ELSE OScanner.Mark("bad type")
+          END
+        END ;
+        x.type := restyp
+      ELSE OScanner.Mark("wrong nof params")
+      END
+    END StandFunc;
+
+    PROCEDURE element(VAR x: OGenCode.Item);
+      VAR y: OGenCode.Item;
+    BEGIN
+      expression(x); CheckSetVal(x);
+      IF sym = OScanner.upto THEN
+        OGenCode.Unary (ORD(Relation1), x);
+        NextToken; expression(y); CheckSetVal(y);
+        OGenCode.Binary(Range, x, y)
+      ELSE
+        OGenCode.Unary (ORD(Singleton), x)
+      END ;
+      x.type := OSymTab.setType
+    END element;
+  
+    PROCEDURE set(VAR x: OGenCode.Item);
+      VAR y: OGenCode.Item;
+    BEGIN
+      IF sym >= OScanner.if THEN
+        IF sym # OScanner.rbrace THEN OScanner.Missing(OScanner.rbrace) END ;
+        OGenCode.MakeConstItem(x, OSymTab.setType, 0) (*empty set*)
+      ELSE element(x);
+        WHILE (sym < OScanner.rparen) OR (sym > OScanner.rbrace) DO
+          IF sym = OScanner.comma THEN NextToken
+          ELSIF sym # OScanner.rbrace THEN OScanner.Missing(OScanner.comma)
+          END ;
+          element(y); OGenCode.SetOp(OScanner.plus, x, y)
+        END
+      END
+    END set;
+
+    PROCEDURE factor(VAR x: OGenCode.Item);
+      VAR obj: OSymTab.Object; rx: INTEGER;
+    BEGIN
+      (*sync*)
+      IF (sym < OScanner.char) OR (sym > OScanner.ident) THEN OScanner.Mark("expression expected");
+        REPEAT NextToken UNTIL (sym >= OScanner.char) & (sym <= OScanner.for) OR (sym >= OScanner.then)
+      END ;
+      IF sym = OScanner.ident THEN
+        qualident(obj);
+        IF obj.class = OSymTab.SFunc THEN StandFunc(x, obj.val, obj.type)
+        ELSE
+          OGenCode.MakeItem(x, obj, level);
+          selector(x);
+          IF sym = OScanner.lparen THEN
+            NextToken;
+            IF (x.type.form = OSymTab.Proc) & (x.type.base.form # OSymTab.NoTyp) THEN
+              OGenCode.Unary(PrepCall,x);
+              ParamList(x);
+              OGenCode.Unary(Call,x);
+              x.type := x.type.base; (* inherit of return type *)
+            ELSE OScanner.Mark("not a function"); ParamList(x)
+            END
+          ELSE OGenCode.Unary(GetContent, x)
+          END
+        END
+      ELSIF sym = OScanner.int    THEN            OGenCode.MakeConstItem (x, OSymTab.intType,  OScanner.ival); NextToken
+      ELSIF sym = OScanner.real   THEN            OGenCode.MakeRealItem  (x, OScanner.rval);                   NextToken
+      ELSIF sym = OScanner.char   THEN            OGenCode.MakeConstItem (x, OSymTab.charType, OScanner.ival); NextToken
+      ELSIF sym = OScanner.nil    THEN NextToken; OGenCode.MakeConstItem (x, OSymTab.nilType,  0)
+      ELSIF sym = OScanner.string THEN            OGenCode.MakeStringItem(x, OScanner.slen);                   NextToken
+      ELSIF sym = OScanner.lparen THEN NextToken; expression(x); Expect(OScanner.rparen)
+      ELSIF sym = OScanner.lbrace THEN NextToken; set(x); Expect(OScanner.rbrace)
+      ELSIF sym = OScanner.not    THEN NextToken; factor(x); CheckBool(x); OGenCode.Unary(Not, x)
+      ELSIF sym = OScanner.false  THEN NextToken; OGenCode.MakeConstItem (x, OSymTab.boolType, 0)
+      ELSIF sym = OScanner.true   THEN NextToken; OGenCode.MakeConstItem (x, OSymTab.boolType, 1)
+      ELSE        OScanner.Mark("not a factor");  OGenCode.MakeConstItem (x, OSymTab.intType,  0)
+      END
+    END factor;
+
+    PROCEDURE term(VAR x: OGenCode.Item);
+      VAR y: OGenCode.Item; op, f: INTEGER;
+    BEGIN
+      factor(x); f := x.type.form;
+      WHILE (sym >= OScanner.times) & (sym <= OScanner.and) DO
+        op := sym; NextToken;
+        IF op = OScanner.and THEN
+          CheckBool(x); OGenCode.Unary (ORD(And1), x); factor(y);
+          CheckBool(y); OGenCode.Binary(And2, x, y)
+        ELSIF op = OScanner.times THEN
+          OGenCode.Unary(Commut1, x);
+          factor(y);
+          IF    f = OSymTab.Int  THEN CheckInt (y); OGenCode.Binary(Mul2, x, y)
+          ELSIF f = OSymTab.Long THEN CheckLong(y); OGenCode.Binary(Mul2, x, y)
+          ELSIF f = OSymTab.Real THEN CheckReal(y); OGenCode.Binary(RealMul2, x, y)
+          ELSIF f = OSymTab.Set  THEN CheckSet (y); OGenCode.SetOp(op, x, y)
+          ELSE OScanner.Mark("bad type")
+          END
+        ELSIF ORD(f) IN {OSymTab.Int, OSymTab.Long, OSymTab.Set, OSymTab.Real} THEN
+          OGenCode.Unary(Expr1, x);
+          factor(y);
+          IF    f = OSymTab.Int  THEN CheckInt (y)
+          ELSIF f = OSymTab.Long THEN CheckLong(y)
+          ELSIF f = OSymTab.Real THEN CheckReal(y)
+          ELSE                        CheckSet (y)
+          END;
+          IF op = OScanner.div THEN
+            IF ORD(f) IN {OSymTab.Int, OSymTab.Long} THEN OGenCode.Binary(Div2, x, y)
+            ELSE OScanner.Mark("bad type")
+            END;
+          ELSIF op = OScanner.mod THEN
+            IF ORD(f) IN {OSymTab.Int, OSymTab.Long} THEN OGenCode.Binary(Mod2, x, y)
+            ELSE OScanner.Mark("bad type")
+            END;
+          ELSIF op = OScanner.rdiv THEN
+            IF    f = OSymTab.Real THEN OGenCode.Binary(RealDiv2, x, y)
+            ELSIF f = OSymTab.Set  THEN OGenCode.SetOp(op, x, y)
+            ELSE OScanner.Mark("bad type")
+            END
+          END
+        ELSE OScanner.Mark("bad type")
+        END
+      END
+    END term;
+
+    PROCEDURE SimpleExpression(VAR x: OGenCode.Item);
+      VAR y: OGenCode.Item; op,f: INTEGER;
+    BEGIN
+      op := sym;
+      IF (op = OScanner.minus) OR (op = OScanner.plus) THEN 
+        NextToken;
+        term(x);
+        IF x.type.form IN {OSymTab.Int, OSymTab.Long, OSymTab.Real, OSymTab.Set}
+        THEN 
+          IF op = OScanner.minus THEN OGenCode.Unary(Neg, x) END
+        ELSE OScanner.Mark("bad type")
+        END
+      ELSE term(x)
+      END ;
+      WHILE (sym >= OScanner.plus) & (sym <= OScanner.or) DO
+        op := sym; NextToken;
+        IF op = OScanner.or THEN 
+          OGenCode.Unary(Or1, x); CheckBool(x); term(y); CheckBool(y); OGenCode.Binary(Or2, x, y)
+        ELSE
+          f := x.type.form;
+          IF op = OScanner.minus THEN OGenCode.Unary(Expr1, x) ELSE OGenCode.Unary(Commut1, x) END;
+          term(y);
+          IF    f = OSymTab.Int  THEN CheckInt (y)
+          ELSIF f = OSymTab.Long THEN CheckLong(y)
+          ELSIF f = OSymTab.Real THEN CheckReal(y)
+          ELSIF f = OSymTab.Set  THEN CheckSet (y)
+          ELSE OScanner.Mark("bad type")
+          END;
+          IF ORD(f) IN {OSymTab.Int, OSymTab.Long} THEN
+            IF op = OScanner.minus THEN OGenCode.Binary(Sub2, x, y) ELSE OGenCode.Binary(Add2, x, y) END
+          ELSIF f = OSymTab.Real THEN
+            IF op = OScanner.minus THEN OGenCode.Binary(RealSub2, x, y) ELSE OGenCode.Binary(RealAdd2, x, y) END
+          ELSE OGenCode.SetOp(op, x, y)
+          END
+        END
+      END
+    END SimpleExpression;
+
+  BEGIN (* expression *)
+    SimpleExpression(x);
+    IF (sym >= OScanner.eql) & (sym <= OScanner.geq) THEN
+      OGenCode.Unary(Relation1,x);
+      rel := sym; NextToken; SimpleExpression(y); xf := x.type.form; yf := y.type.form;
+      IF x.type = y.type THEN
+        IF (xf IN {OSymTab.Char, OSymTab.Int, OSymTab.Long}) THEN OGenCode.IntRelation(rel, x, y)
+        ELSIF xf = OSymTab.Real THEN OGenCode.RealRelation(rel, x, y)
+        ELSIF (xf IN {OSymTab.Set, OSymTab.Pointer, OSymTab.Proc, OSymTab.NilTyp, OSymTab.Bool}) THEN
+          IF rel <= OScanner.neq THEN OGenCode.IntRelation(rel, x, y) ELSE OScanner.Mark("only = or #") END
+        ELSIF (xf = OSymTab.Array) & (x.type.base.form = OSymTab.Char) OR (xf = OSymTab.String) THEN
+          OGenCode.StringRelation(rel, x, y)
+        ELSE OScanner.Mark("illegal comparison")
+        END
+      ELSIF (xf IN {OSymTab.Pointer, OSymTab.Proc}) & (yf = OSymTab.NilTyp)
+          OR (yf IN {OSymTab.Pointer, OSymTab.Proc}) & (xf = OSymTab.NilTyp) THEN
+        IF rel <= OScanner.neq THEN OGenCode.IntRelation(rel, x,  y) ELSE OScanner.Mark("only = or #") END
+      ELSIF (xf = OSymTab.Pointer) & (yf = OSymTab.Pointer) &
+          (IsExtension(x.type.base, y.type.base) OR IsExtension(y.type.base, x.type.base))
+          OR (xf = OSymTab.Proc) & (yf = OSymTab.Proc) & EqualSignatures(x.type, y.type) THEN
+        IF rel <= OScanner.neq THEN OGenCode.IntRelation(rel,  x, y) ELSE OScanner.Mark("only = or #") END
+      ELSIF (xf = OSymTab.Array) & (x.type.base.form = OSymTab.Char) &
+            ((yf = OSymTab.String) OR (yf = OSymTab.Array) & (y.type.base.form = OSymTab.Char))
+          OR (yf = OSymTab.Array) & (y.type.base.form = OSymTab.Char) & (xf = OSymTab.String) THEN
+        OGenCode.StringRelation(rel, x, y)
+      ELSIF (xf = OSymTab.Char) & (yf = OSymTab.String) & (y.b = 1) THEN
+        OGenCode.Unary(StrToChar, y); OGenCode.IntRelation(rel, x, y)
+      ELSIF (yf = OSymTab.Char) & (xf = OSymTab.String) & (x.b = 1) THEN
+        OGenCode.Unary(StrToChar, x); OGenCode.IntRelation(rel, x, y)
+      ELSIF (xf = OSymTab.Int) & (yf = OSymTab.Int) THEN OGenCode.IntRelation(rel,  x, y)  (*BYTE*)
+      ELSE OScanner.Mark("incompatible types")
+      END ;
+      x.type := OSymTab.boolType
+    ELSIF sym = OScanner.in THEN
+      NextToken;
+      CheckInt(x); OGenCode.Unary(Relation1, x);
+      SimpleExpression(y); CheckSet(y); OGenCode.Binary(In, x, y) ;
+      x.type := OSymTab.boolType
+    ELSIF sym = OScanner.is THEN
+      NextToken; qualident(obj); TypeTest(x, obj.type, FALSE) ;
+      x.type := OSymTab.boolType
+    END
+  END expression;
+
+  (* statements *)
+
+  PROCEDURE StatSequence;
+    VAR obj: OSymTab.Object;
+      x, y, z, w: OGenCode.Item;
+      loopStart, condJump, loopJump, condList, endList: INTEGER;
+
+    PROCEDURE StandProc(pno: INTEGER);
+      VAR nap, npar: INTEGER; (*nof actual/formal parameters*)
+        x, y, z: OGenCode.Item;
+        L0: INTEGER;
+    BEGIN
+      L0 := OGenCode.Here();
+      npar := pno MOD 10; pno := pno DIV 10;
+      nap := 0;
+      IF npar >= 1 THEN
+        Expect(OScanner.lparen);
+        expression(x);
+        IF     pno >= 12 THEN OGenCode.ValueParam(x, OSymTab.intType)
+        ELSIF (pno >= 4) & (pno <= 9) THEN OGenCode. VarParam(x, x.type)
+        END;
+        nap := 1;
+        IF sym = OScanner.comma THEN
+          NextToken;
+          expression(y);
+          IF pno >= 4 THEN OGenCode.ValueParam(y, OSymTab.intType) END;
+          nap := 2; z.type := OSymTab.noType;
+          WHILE sym = OScanner.comma DO
+            NextToken;
+            expression(z); OGenCode.ValueParam(z, OSymTab.intType);
+            INC(nap)
+          END
+        ELSE y.type := OSymTab.noType
+        END ;
+        Expect(OScanner.rparen);
+      END;
+      IF (npar = nap) OR (pno < 2) THEN
+        IF   (pno < 2) THEN (* INC or DEC *)
+          CheckInt(x); CheckWritable(x);
+          IF y.type = OSymTab.noType
+          THEN y.a := OSymTab.Const; y.a := 1
+          ELSE CheckInt(y); CheckConst(y)
+          END ;
+          IF pno # 0 THEN y.a := -y.a END;
+          OGenCode.Binary(Increment, x, y)
+        ELSIF pno = 2 THEN (*INCL*)
+          CheckSet(x); CheckWritable(x); CheckInt(y); CheckConst(y); OGenCode.Binary(Include, x, y)
+        ELSIF pno = 3 THEN (*EXCL*)
+          CheckSet(x); CheckWritable(x); CheckInt(y); CheckConst(y); OGenCode.Binary(Exclude, x, y)
+        ELSIF pno <= 7 THEN (*NEW/DISPOSE/ALLOCATE/DEALLOCATE*)
+            CheckWritable(x); IF pno >= 6 THEN CheckInt(y) END;
+            IF x.type^.form = OSymTab.Pointer THEN
+              IF    pno = 4 THEN OGenCode.Unary (ORD(New), x)
+              ELSIF pno = 5 THEN OGenCode.Unary (ORD(Dispose), x)
+              ELSIF pno = 6 THEN OGenCode.Binary(Allocate, x, y)
+              ELSE               OGenCode.Binary(Dealloc,  x, y)
+              END
+            ELSE OScanner.Mark("not a pointer")
+            END
+        ELSIF pno =  8 THEN (* MARK *) CheckInt(x); OGenCode.Unary(Mark, x)
+        ELSIF pno =  9 THEN (*RELEASE*)CheckInt(x); OGenCode.Unary(Release, x)
+        ELSIF pno = 10 THEN (* CLC *) OGenCode.ClearCarry
+        ELSIF pno = 11 THEN (* ASSERT *)
+          CheckBool(x); OGenCode.Assert(x, L0)
+        ELSIF pno = 12 THEN (* PUT  *) CheckInt(x); OGenCode.Binary(Put, x, y)
+        ELSIF pno = 13 THEN (* COPY *) CheckInt(x); CheckInt(y); CheckInt(z); OGenCode.Copy
+        ELSIF pno = 14 THEN (* FILL *) CheckInt(x); CheckInt(y); CheckInt(z); OGenCode.Fill
+        END
+      ELSE OScanner.Mark("wrong nof parameters")
+      END
+    END StandProc;
+
+    PROCEDURE TypeCase(obj: OSymTab.Object; VAR condList: INTEGER);
+      VAR typobj : OSymTab.Object;
+          x      : OGenCode.Item;
+          orgtype: OSymTab.Type; (* original type of case variable *)
+    BEGIN
+      OGenCode.MakeItem(x, obj, level);
+      IF sym = OScanner.ident THEN
+        qualident(typobj);
+        IF typobj.class # OSymTab.Typ THEN OScanner.Mark("not a type") END ;
+        TypeTest(x, typobj.type, FALSE);
+        orgtype  := obj.type;    (* save the original type of the variable *)
+        obj.type := typobj.type; (* variable is now considered as the selected type...*)
+        OGenCode.FJump(condList, TRUE);
+        Expect(OScanner.colon);
+        StatSequence;            (* ... for the duration of the statement sequence *)
+        obj.type := orgtype;     (* restore the original type for the next TypeTest *)
+      ELSE OGenCode.FJump(condList, TRUE); OScanner.Mark("type id expected")
+      END
+     END TypeCase;
+
+    PROCEDURE TableCase(obj: OSymTab.Object);
+    VAR jumpArray: ARRAY 256 OF INTEGER;
+        x: OGenCode.Item;
+        caseJump: INTEGER;
+    BEGIN
+      OGenCode.MakeItem(x, obj, level);
+      OGenCode.Unary(Expr1, x);
+      OGenCode.FJump(caseJump, FALSE);
+      WHILE sym = OScanner.bar DO
+        NextToken;
+        expression(x);
+        IF (x.type = OSymTab.strType) & (x.b = 1) THEN
+          OGenCode.Unary(StrToChar, x)
+        END;
+        CheckConst(x);
+        IF x.type.form # obj.type.form THEN OScanner.Mark("bad type") END;
+        IF (x.a >= 0) & (x.a <= 255)
+        THEN jumpArray[x.a] := OGenCode.Here()
+        ELSE OScanner.Mark("byte value only")
+        END;
+        Expect(OScanner.colon);
+        StatSequence;
+        OGenCode.EndCase
+      END;
+      OGenCode.JumpTable(caseJump, jumpArray)
+    END TableCase;
+
+  BEGIN (* StatSequence *)
+    REPEAT (*sync*) obj := NIL;
+      IF ~((sym >= OScanner.ident)  & (sym <= OScanner.for) OR (sym >= OScanner.semicolon)) THEN
+        OScanner.Mark("statement expected");
+        REPEAT NextToken UNTIL (sym >= OScanner.ident)
+      END ;
+      IF sym = OScanner.ident THEN
+        qualident(obj); OGenCode.MakeItem(x, obj, level);
+        IF x.mode = OSymTab.SProc THEN StandProc(obj.val)
+        ELSE selector(x);
+          IF sym = OScanner.becomes THEN (*assignment*)
+            NextToken;
+            CheckWritable(x);
+            OGenCode.Unary(Store1, x);
+            expression(y);
+            IF CompTypes(x.type, y.type, FALSE) THEN
+              IF (x.type.form <= OSymTab.Pointer) OR (x.type.form = OSymTab.Proc)
+              THEN OGenCode.Binary(Store2, x, y)
+              ELSE OGenCode.Binary(StoreStruct, x, y)
+              END
+            ELSIF (x.type.form = OSymTab.Array)
+                & (y.type.form = OSymTab.Array)
+                & (x.type.base = y.type.base)
+                & (y.type.len  < 0) THEN
+              OGenCode.Binary(StoreStruct, x, y)
+            ELSIF (x.type.form = OSymTab.Array)
+                & (x.type.base.form = OSymTab.Char)
+                & (y.type.form = OSymTab.String) THEN
+              OGenCode.Binary(CopyString, x, y)
+            ELSIF (x.type.form = OSymTab.Int)
+                & (y.type.form = OSymTab.Int) THEN
+              OGenCode.Binary(Store2, x, y)  (*BYTE*)
+            ELSIF (x.type.form = OSymTab.Char)
+                & (y.type.form = OSymTab.String)
+                & (y.b = 1) THEN
+              OGenCode.Unary(StrToChar, y); OGenCode.Binary(Store2, x, y)
+            ELSE
+              OScanner.Mark("illegal assignment")
+            END
+          ELSIF sym = OScanner.eql THEN OScanner.Mark("should be :="); NextToken; expression(y)
+          ELSIF sym = OScanner.lparen THEN (*procedure call*)
+            NextToken;
+            IF (x.type.form = OSymTab.Proc)
+             & (x.type.base.form = OSymTab.NoTyp) THEN
+              OGenCode.Unary(PrepCall,x); ParamList(x); OGenCode.Unary(Call,x)
+            ELSE OScanner.Mark("not a procedure"); ParamList(x)
+            END
+          ELSIF x.type.form = OSymTab.Proc THEN (*procedure call without parameters*)
+            IF x.type.nofpar > 0 THEN OScanner.Mark("missing parameters") END ;
+            IF x.type.base.form = OSymTab.NoTyp
+            THEN OGenCode.Unary(PrepCall,x); OGenCode.Unary(Call,x)
+            ELSE OScanner.Mark("not a procedure")
+            END
+          ELSIF x.mode = OSymTab.Typ THEN OScanner.Mark("illegal assignment")
+          ELSE OScanner.Mark("not a procedure")
+          END
+        END
+
+      ELSIF sym = OScanner.if THEN
+        endList  := 0; (* end of branch links list *)
+        condList := 0; (* end of conditional jumps list *)
+        NextToken;
+        expression(x); CheckBool(x); OGenCode.Unary(Expr1, x);
+        OGenCode.FJump(condList, TRUE);    (* chainlink the conditional jumps *)
+        Expect(OScanner.then);
+        StatSequence;
+        WHILE sym = OScanner.elsif DO
+          NextToken;
+          OGenCode.FJump(endList, FALSE);  (* chain the jumps-to-the-end *)
+          expression(x); CheckBool(x); OGenCode.Unary(Expr1, x);
+          OGenCode.FJump(condList, TRUE);
+          Expect(OScanner.then);
+          StatSequence
+        END ;
+        IF sym = OScanner.else THEN
+          NextToken;
+          OGenCode.FJump(endList, FALSE);
+          StatSequence
+        END ;
+        Expect(OScanner.end);
+        OGenCode.FixBranchLists(condList, endList);
+
+      ELSIF sym = OScanner.while THEN
+        loopStart := OGenCode.Here();
+        REPEAT
+          NextToken;
+          expression(x); CheckBool(x); OGenCode.Unary(Expr1, x);
+          OGenCode.FJump(condJump, TRUE);
+          Expect(OScanner.do);
+          StatSequence;
+          loopJump := OGenCode.Here();
+          OGenCode.BJump(loopStart, FALSE);
+          OGenCode.Fixup2(condJump, loopJump);
+        UNTIL sym # OScanner.elsif;
+        Expect(OScanner.end)
+
+      ELSIF sym = OScanner.repeat THEN
+        NextToken; loopStart := OGenCode.Here(); StatSequence;
+        IF sym = OScanner.until THEN
+          NextToken; expression(x); CheckBool(x); OGenCode.Unary(Expr1, x);
+          OGenCode.BJump(loopStart, TRUE)
+        ELSE OScanner.Missing(OScanner.until)
+        END
+
+      ELSIF sym = OScanner.for THEN
+        NextToken;
+        IF sym = OScanner.ident THEN
+          qualident(obj); OGenCode.MakeItem(x, obj, level); CheckInt(x); CheckWritable(x);
+          IF sym = OScanner.becomes THEN
+            NextToken; expression(y); CheckInt(y);
+            OGenCode.Binary(For0, x, y); (* loop variable initialization *)
+            loopStart := OGenCode.Here();
+            OGenCode.Unary(For1a, x);    (* load the loop variable to prepare the comparison *)
+            Expect(OScanner.to); expression(z); CheckInt(z);
+            obj.rdo := TRUE;                  (* loop variable is readonly inside the loop *)
+            IF sym = OScanner.by THEN NextToken; expression(w); CheckConst(w); CheckInt(w)
+            ELSE OGenCode.MakeConstItem(w, OSymTab.intType, 1)
+            END ;
+            OGenCode.Binary(For1b, z, w);(* compare with the limit expression *)
+            OGenCode.FJump(condJump, TRUE);
+            Expect(OScanner.do);
+            StatSequence;
+            OGenCode.Binary(For2, x, w); (* increment the loop variable *)
+            loopJump := OGenCode.Here();
+            OGenCode.BJump(loopStart, FALSE);
+            OGenCode.Fixup2(condJump, loopJump);
+            Expect(OScanner.end);
+            obj.rdo := FALSE                  (* loop variable is writable outside the loop *)
+          ELSE OScanner.Missing(OScanner.becomes)
+          END
+        ELSE OScanner.Missing(OScanner.ident)
+        END
+
+      ELSIF sym = OScanner.case THEN
+        NextToken; qualident(obj);
+        Expect(OScanner.of);
+        IF    (obj.type = OSymTab.intType)
+           OR (obj.type = OSymTab.charType) THEN TableCase(obj)
+        ELSIF (obj.type.form = OSymTab.Pointer)
+           OR (obj.type.form = OSymTab.Record) THEN
+          condList := 0; endList := 0;
+          WHILE sym = OScanner.bar DO
+            NextToken;
+            TypeCase(obj, condList);
+            OGenCode.FJump(endList, FALSE);
+          END ;
+          OGenCode.FixBranchLists(condList, endList);
+        ELSE OScanner.Mark("variable expected")
+        END ;
+        Expect(OScanner.end)
+      END ;
+
+      (* statements are separated by semi-colons *)
+      IF sym = OScanner.semicolon THEN NextToken
+      ELSIF sym < OScanner.semicolon THEN OScanner.Missing(OScanner.semicolon)
+      END
+    UNTIL sym > OScanner.semicolon
+  END StatSequence;
+
+  PROCEDURE CheckRecLevel(lev: INTEGER);
+  BEGIN
+    IF lev # 0 THEN OScanner.Mark("ptr base must be global") END
+  END CheckRecLevel;
+
+  PROCEDURE Import;
+    VAR impid, impid1: OScanner.Ident;
+  BEGIN
+    IF sym = OScanner.ident THEN
+      OScanner.CopyId(impid); NextToken;
+      IF sym = OScanner.becomes THEN
+        NextToken;
+        IF sym = OScanner.ident THEN OScanner.CopyId(impid1); NextToken
+        ELSE OScanner.Missing(OScanner.ident); impid1 := impid
+        END
+      ELSE impid1 := impid
+      END ;
+      OSymTab.Import(impid, impid1)
+    ELSE OScanner.Missing(OScanner.ident)
+    END
+  END Import;
+
+  PROCEDURE IdentList(class: INTEGER; VAR first: OSymTab.Object);
+    VAR obj: OSymTab.Object;
+  BEGIN
+    IF sym = OScanner.ident THEN
+      OSymTab.NewObj(first, OScanner.id, class); NextToken; CheckExport(first.expo);
+      WHILE sym = OScanner.comma DO
+        NextToken;
+        IF sym = OScanner.ident THEN OSymTab.NewObj(obj, OScanner.id, class); NextToken; CheckExport(obj.expo)
+        ELSE OScanner.Missing(OScanner.ident)
+        END
+      END;
+      Expect(OScanner.colon)
+    ELSE first := NIL
+    END
+  END IdentList;
+
+  PROCEDURE ProcedureType(ptype: OSymTab.Type; VAR parblksize: INTEGER);
+    VAR first, obj: OSymTab.Object; size: INTEGER; nofpar: INTEGER;
+
+    PROCEDURE FormalType(VAR typ: OSymTab.Type; dim: INTEGER);
+      VAR obj: OSymTab.Object; dmy: INTEGER;
+    BEGIN
+      IF sym = OScanner.ident THEN
+        qualident(obj);
+        IF obj.class = OSymTab.Typ THEN typ := obj.type ELSE OScanner.Mark("not a type"); typ := OSymTab.intType END
+      ELSIF sym = OScanner.array THEN
+        NextToken; Expect(OScanner.of);
+        IF dim >= 1 THEN OScanner.Mark("multi-dimensional open arrays not implemented") END ;
+        NEW(typ); typ.form := OSymTab.Array; typ.len := -1; typ.size := 2*OGenCode.WordSize;
+        FormalType(typ.base, dim+1)
+      ELSIF sym = OScanner.procedure THEN
+        NextToken; OSymTab.OpenScope;
+        NEW(typ); typ.form := OSymTab.Proc; typ.size := 2*OGenCode.WordSize; dmy := 0; ProcedureType(typ, dmy);
+        typ.dsc := OSymTab.topScope.next; OSymTab.CloseScope
+      ELSE OScanner.Missing(OScanner.ident); typ := OSymTab.noType
+      END
+    END FormalType;
+
+    PROCEDURE FPSection(VAR parblksize: INTEGER; VAR nofpar: INTEGER): OSymTab.Object;
+      VAR obj, first: OSymTab.Object; tp: OSymTab.Type;
+        paramsize: INTEGER; class: INTEGER; rdo: BOOLEAN;
+    BEGIN
+      IF sym = OScanner.var
+      THEN class := OSymTab.Indirect; NextToken
+      ELSE class := OSymTab.Var
+      END ;
+      IdentList(class, first); FormalType(tp, 0); rdo := FALSE;
+      IF (class = OSymTab.Var) & (tp.form >= OSymTab.Array) THEN class := OSymTab.Indirect; rdo := TRUE END ;
+      IF (tp = OSymTab.realType) OR (tp = OSymTab.longType) OR (tp.form = OSymTab.Proc)
+      THEN paramsize := 2
+      ELSE paramsize := 1
+      END;
+      obj := first;
+      WHILE obj # NIL DO
+        INC(nofpar);
+        obj.class  := class;
+        obj.type   := tp;
+        obj.rdo    := rdo;
+        obj.lev    := level;
+        parblksize := parblksize + paramsize;
+        obj.val    := parblksize; (* correct offset will be calculated once all formal params are stored *)
+        IF (tp.form = OSymTab.Array)   & (tp.len < 0)         (* open array *)
+        OR (tp.form = OSymTab.Record)  & (tp.nofpar # 0)      (* tagged record *)
+        THEN
+          INC(parblksize)    (* another word for length of open array / type tag of record *)
+        END;
+        obj        := obj.next
+      END ;
+      IF nofpar > 60 THEN OScanner.Mark("too many parameters") END;
+      RETURN first
+    END FPSection;
+
+  BEGIN (* ProcedureType *)
+    ptype.base := OSymTab.noType;
+    nofpar      := 0;
+    ptype.dsc  := NIL;
+    parblksize  := 0;
+    IF sym = OScanner.lparen THEN
+      NextToken;
+      IF sym = OScanner.rparen THEN NextToken
+      ELSE
+        first := FPSection(parblksize, nofpar);
+        WHILE sym = OScanner.semicolon DO
+          NextToken;
+          obj := FPSection(parblksize, nofpar)
+        END ;
+        Expect(OScanner.rparen);
+        obj := first;
+        WHILE obj # NIL DO
+          obj.val := parblksize - obj.val + 3; (* fixes offsets of params *)
+          obj := obj.next
+        END;
+      END ;
+      IF sym = OScanner.colon THEN  (*function*)
+        NextToken;
+        IF sym = OScanner.ident THEN
+          qualident(obj); ptype.base := obj.type;
+          IF ~((obj.class = OSymTab.Typ) & (obj.type.form IN {OSymTab.Byte .. OSymTab.Pointer, OSymTab.Proc})) THEN
+            OScanner.Mark("illegal function type")
+          END
+        ELSE OScanner.Mark("type identifier expected")
+        END
+      END
+    END ;
+    ptype.nofpar := nofpar;
+  END ProcedureType;
+
+  PROCEDURE ArrayType(VAR type: OSymTab.Type);
+    VAR x: OGenCode.Item; typ: OSymTab.Type; len: INTEGER;
+  BEGIN NEW(typ); typ.form := OSymTab.NoTyp;
+    expression(x);
+    IF (x.mode = OSymTab.Const) & (x.type.form = OSymTab.Int) & (x.a >= 0) 
+    THEN len := x.a
+    ELSE len := 1; OScanner.Mark("not a valid length")
+    END ;
+    IF sym = OScanner.of THEN NextToken; TypeProc(typ.base);
+      IF (typ.base.form = OSymTab.Array) & (typ.base.len < 0) THEN OScanner.Mark("dyn array not allowed") END
+    ELSIF sym = OScanner.comma THEN NextToken; ArrayType(typ.base)
+    ELSE OScanner.Missing(OScanner.of); typ.base := OSymTab.intType
+    END ;
+    typ.size := len * typ.base.size;
+    typ.form := OSymTab.Array;
+    typ.len  := len;
+    type := typ
+  END ArrayType;
+
+  PROCEDURE RecordType(VAR type: OSymTab.Type; tagged: BOOLEAN);
+    VAR obj, obj0, new, bot, base: OSymTab.Object;
+      typ, tp: OSymTab.Type;
+      offset, off, n, size: INTEGER;
+  BEGIN
+    NEW(typ);
+    typ.form   := OSymTab.NoTyp;
+    typ.base   := NIL;
+    typ.mno    := -level;
+    typ.nofpar := ORD(tagged);       (* 1 if base-type tagged record, 0 if non-tagged *)
+    offset     := 0;
+    bot        := NIL;
+    IF sym = OScanner.lparen THEN (*record extension*)
+      NextToken;
+      IF level # 0 THEN OScanner.Mark("extension of local types not implemented") END ;
+      IF sym = OScanner.ident THEN
+        qualident(base);
+        IF base.class = OSymTab.Typ THEN
+          IF (base.type.form = OSymTab.Record) & (base.type.nofpar # 0)
+          THEN typ.base := base.type
+          ELSE typ.base := OSymTab.intType; OScanner.Mark("invalid extension")
+          END ;
+          typ.nofpar := typ.base.nofpar + 1; (*"nofpar" here abused for extension level*)
+          bot        := typ.base.dsc;
+          offset     := typ.base.size        (* start after the base type *)
+        ELSE OScanner.Mark("type expected")
+        END
+      ELSE OScanner.Missing(OScanner.ident)
+      END ;
+      Expect(OScanner.rparen)
+    ELSE
+    END ;
+    WHILE sym = OScanner.ident DO  (*fields*)
+      n := 0; obj := bot;
+      WHILE sym = OScanner.ident DO
+        obj0 := obj;
+        WHILE (obj0 # NIL) & (obj0.name # OScanner.id) DO obj0 := obj0.next END ;
+        IF obj0 # NIL THEN OScanner.Mark("mult def") END ;
+        NEW(new); OScanner.CopyId(new.name); new.class := OSymTab.Fld; new.next := obj; obj := new; INC(n);
+        NextToken; CheckExport(new.expo);
+        IF (sym # OScanner.comma) & (sym # OScanner.colon) THEN OScanner.Missing(OScanner.comma)
+        ELSIF sym = OScanner.comma THEN NextToken
+        END
+      END ;
+      Expect(OScanner.colon); TypeProc(tp);
+      IF (tp.form = OSymTab.Array) & (tp.len < 0) THEN OScanner.Mark("dyn array not allowed") END ;
+      size := tp^.size;
+      offset := offset + size * n;
+      off := offset; obj0 := obj; (* handle objects of same type, backwards *)
+      WHILE obj0 # bot DO
+        obj0.type := tp;
+        obj0.lev  := 0;
+        off       := off - size;
+        obj0.val  := off;
+        obj0      := obj0.next
+      END ;
+      bot := obj;
+      IF sym = OScanner.semicolon THEN NextToken ELSIF sym # OScanner.end THEN OScanner.Mark(" ; or END") END
+    END ;
+    typ.form := OSymTab.Record;
+    typ.dsc  := bot;
+    typ.size := offset;
+    type     := typ
+  END RecordType;
+
+  PROCEDURE Type(VAR type: OSymTab.Type);
+    VAR dmy: INTEGER; obj: OSymTab.Object; ptbase: PtrBase;
+  BEGIN
+    type := OSymTab.intType; (*sync*)
+    IF (sym # OScanner.ident) & (sym < OScanner.array) THEN OScanner.Mark("not a type");
+      REPEAT NextToken UNTIL (sym = OScanner.ident) OR (sym >= OScanner.array)
+    END ;
+    IF sym = OScanner.ident THEN
+      qualident(obj);
+      IF obj.class = OSymTab.Typ THEN
+        IF (obj.type # NIL) & (obj.type.form # OSymTab.NoTyp) THEN type := obj.type END
+      ELSE OScanner.Mark("not a type or undefined")
+      END
+    ELSIF sym = OScanner.array THEN NextToken; ArrayType(type)
+    ELSIF sym = OScanner.tagged THEN NextToken; Expect(OScanner.record);
+      RecordType(type, TRUE); Expect(OScanner.end)
+    ELSIF sym = OScanner.record THEN NextToken; 
+      RecordType(type, FALSE); Expect(OScanner.end)
+    ELSIF sym = OScanner.pointer THEN
+      NextToken; Expect(OScanner.to);
+      NEW(type);
+      type.form := OSymTab.Pointer;
+      type.size := OGenCode.WordSize;
+      type.base := OSymTab.intType;
+      IF sym = OScanner.ident THEN
+        obj := OSymTab.thisObj();
+        IF obj # NIL THEN
+          IF (obj.class = OSymTab.Typ) & (obj.type.form IN {OSymTab.Record, OSymTab.NoTyp}) THEN
+            CheckRecLevel(obj.lev); type.base := obj.type
+          ELSIF obj.class = OSymTab.Mod THEN OScanner.Mark("external base type not implemented")
+          ELSE OScanner.Mark("no valid base type")
+          END
+        ELSE
+          CheckRecLevel(level);
+          (*enter into list of forward references to be fixed in Declarations*)
+          NEW(ptbase);
+          OScanner.CopyId(ptbase.name);
+          ptbase.type := type;
+          ptbase.next := pbsList;
+          pbsList     := ptbase
+        END ;
+        NextToken
+      ELSE Type(type.base);
+        IF (type.base.form # OSymTab.Record) OR (type.base.typobj = NIL) THEN OScanner.Mark("must point to named record") END ;
+        CheckRecLevel(level)
+      END
+    ELSIF sym = OScanner.procedure THEN
+      NextToken; OSymTab.OpenScope;
+      NEW(type); type.form := OSymTab.Proc; type.size := 2*OGenCode.WordSize; dmy := 0;
+      ProcedureType(type, dmy); type.dsc := OSymTab.topScope.next; OSymTab.CloseScope
+    ELSE OScanner.Mark("illegal type")
+    END
+  END Type;
+
+  PROCEDURE Declarations(VAR nofvars: INTEGER; (* LONGINT and REAL vars are counted as 2 word variables *)
+                         VAR arraySizes: OGenCode.VarSizes);
+    VAR obj, first: OSymTab.Object;
+      x: OGenCode.Item; tp: OSymTab.Type; ptbase: PtrBase;
+      expo: BOOLEAN; id: OScanner.Ident;
+      size: INTEGER;
+  BEGIN
+    nofvars := 0;
+    (*sync*) pbsList := NIL;
+    IF (sym < OScanner.const) & (sym # OScanner.end) & (sym # OScanner.return) THEN OScanner.Mark("declaration?");
+      REPEAT NextToken UNTIL (sym >= OScanner.const) OR (sym = OScanner.end) OR (sym = OScanner.return)
+    END ;
+    IF sym = OScanner.const THEN
+      NextToken;
+      WHILE sym = OScanner.ident DO
+        OScanner.CopyId(id); NextToken; CheckExport(expo);
+        Expect(OScanner.eql);
+        expression(x);
+        OSymTab.NewObj(obj, id, OSymTab.Const); obj.expo := expo;
+        IF x.mode = OSymTab.Const THEN
+          obj.val       := x.a;
+          obj.extension := x.msw;
+          obj.lev       := x.b;
+          obj.type      := x.type
+        ELSE OScanner.Mark("expression not constant"); obj.type := OSymTab.intType
+        END;
+        Expect(OScanner.semicolon)
+      END
+    END ;
+    IF sym = OScanner.type THEN
+      NextToken;
+      WHILE sym = OScanner.ident DO
+        OScanner.CopyId(id); NextToken; CheckExport(expo);
+        Expect(OScanner.eql);
+        Type(tp);
+        OSymTab.NewObj(obj, id, OSymTab.Typ);
+        obj.type := tp;
+        obj.expo := expo;
+        obj.lev  := level;
+        IF tp.typobj = NIL THEN tp.typobj := obj END ;
+(*
+        IF expo & (tp.form = OSymTab.Record) 
+        THEN obj.exno := exno; INC(exno)
+        ELSE obj.exno := 0 
+        END ;
+*)
+        IF tp.form = OSymTab.Record THEN
+          ptbase := pbsList;  (*check whether this is base of a pointer type; search and fixup*)
+          WHILE ptbase # NIL DO
+            IF obj.name = ptbase.name THEN ptbase.type.base := obj.type END ;
+            ptbase := ptbase.next
+          END ;
+          IF (level = 0) & (tp.nofpar # 0) THEN 
+            tp.len := nofvars + 2; (* len field used as global offset *)
+            arraySizes[tp.len] := tp.size;
+            OGenCode.BuildTD(tp);
+            INC(nofvars)
+          END
+        END ;
+        Expect(OScanner.semicolon)
+      END
+    END ;
+    IF sym = OScanner.var THEN
+      NextToken;
+      WHILE sym = OScanner.ident DO
+        IdentList(OSymTab.Var, first); Type(tp);
+        obj := first;
+        WHILE obj # NIL DO
+          obj.type := tp;
+          obj.lev  := level;
+          IF (tp.form = OSymTab.Record) OR (tp.form = OSymTab.Array)
+          THEN size := 1; arraySizes[nofvars+2] := tp.size (* records and arrays becomes pointers *)
+          ELSE size := (tp.size + 1) DIV 2; (* size in words *)
+          END;
+          nofvars := nofvars + size;
+          IF level > 0 (* local variables have negative offsets *)
+          THEN obj.val := -(nofvars + 1)     (*  local variables #0 and #1 are reserved *)
+          ELSE obj.val := nofvars - size + 2 (* global variables #0 and #1 are reserved *)
+          END;
+(*
+          IF obj.expo THEN obj.exno := exno; INC(exno) END ;
+*)
+          obj := obj.next
+        END ;
+        Expect(OScanner.semicolon)
+      END
+    END ;
+    ptbase := pbsList;
+    WHILE ptbase # NIL DO
+      IF ptbase.type.base.form = OSymTab.Int THEN OScanner.Mark("undefined pointer base of") END ;
+      ptbase := ptbase.next
+    END ;
+    IF (sym >= OScanner.const) & (sym <= OScanner.var) THEN OScanner.Mark("declaration in bad order") END
+  END Declarations;
+
+  PROCEDURE ProcedureDecl;
+    VAR
+      proc  : OSymTab.Object;
+      type  : OSymTab.Type;
+      procid: OScanner.Ident;
+      x     : OGenCode.Item;
+      locblksize, parblksize: INTEGER;
+      arraySizes: OGenCode.VarSizes;
+      heap : INTEGER;
+  BEGIN
+    NextToken;
+    IF sym = OScanner.ident THEN
+      OScanner.CopyId(procid); NextToken;
+      OSymTab.NewObj(proc, OScanner.id, OSymTab.Const);
+      parblksize := 0;
+      NEW(type); type.form := OSymTab.Proc; type.size := OGenCode.WordSize;
+      proc.type := type;
+      proc.lev  := level;
+      proc.val  := OGenCode.NextProcNum();
+      CheckExport(proc.expo);
+      OSymTab.OpenScope; INC(level); type.base := OSymTab.noType;
+      ProcedureType(type, parblksize);  (*formal parameter list*)
+      Expect(OScanner.semicolon);
+      SYSTEM.MARK(heap);
+      Declarations(locblksize, arraySizes);
+      proc.type.dsc := OSymTab.topScope.next;
+      IF sym = OScanner.procedure THEN
+        REPEAT ProcedureDecl; Expect(OScanner.semicolon) UNTIL sym # OScanner.procedure;
+        proc.type.dsc := OSymTab.topScope.next
+      END ;
+      OGenCode.Enter(proc, parblksize, locblksize, arraySizes);
+      Expect(OScanner.begin);
+      StatSequence;
+      IF sym = OScanner.return THEN
+        NextToken; expression(x);
+        IF type.base = OSymTab.noType THEN OScanner.Mark("this is not a function")
+        ELSIF ~CompTypes(type.base, x.type, FALSE) THEN OScanner.Mark("wrong result type")
+        END
+      ELSIF type.base.form # OSymTab.NoTyp THEN
+        OScanner.Mark("function without result"); type.base := OSymTab.noType
+      END ;
+      OGenCode.Return(type.base.form, x, parblksize);
+      OSymTab.CloseScope; DEC(level);
+      Expect(OScanner.end);
+      IF sym = OScanner.ident THEN
+        IF OScanner.id # procid THEN OScanner.Mark("no match") END ;
+        NextToken
+      ELSE OScanner.Mark("no proc id")
+      END;
+      SYSTEM.RELEASE(heap)
+    ELSE OScanner.Mark("proc id expected")
+    END;
+  END ProcedureDecl;
+
+  PROCEDURE Module;
+    VAR key: INTEGER;
+        arraySizes: OGenCode.VarSizes;
+        i, staticSize, bssSize : INTEGER;
+  BEGIN
+    (* initializes the two procedure variables, used because of necessary forward reference  *)
+    expressionProc := expression; TypeProc := Type;
+
+    (* dummy integer variable will replace undefined identifiers *)
+    OSymTab.Init; OSymTab.OpenScope;
+    NEW(dummy); dummy.class := OSymTab.Var; dummy.type := OSymTab.intType;
+
+    NextToken;
+    Expect(OScanner.module);
+    IF sym = OScanner.ident THEN
+      OScanner.CopyId(modid); NextToken;
+    ELSE OScanner.Missing(OScanner.ident)
+    END ;
+IF DEBUG THEN Out.String(" free memory : "); Out.Int(SYSTEM.FREEMEM(),5); Out.Ln END;
+    Expect(OScanner.semicolon);
+    level := 0; key := 0; (* exno := 1; *)
+    IF sym = OScanner.import THEN
+      NextToken; Import;
+      WHILE sym = OScanner.comma DO NextToken; Import END ;
+      Expect(OScanner.semicolon);
+    END ;
+    OGenCode.Open(modid);
+    Declarations(dc, arraySizes); OGenCode.SetDataSize(dc);
+    WHILE sym = OScanner.procedure DO ProcedureDecl; Expect(OScanner.semicolon) END ;
+    OGenCode.Header(modid);
+    IF sym = OScanner.begin THEN NextToken; StatSequence END ;
+    Expect(OScanner.end);
+    IF sym = OScanner.ident THEN
+      IF OScanner.id # modid THEN OScanner.Mark("no match") END ;
+      NextToken
+    ELSE OScanner.Missing(OScanner.ident)
+    END ;
+    Expect(OScanner.period);
+    OScanner.Close;
+    IF OScanner.errcnt = 0 THEN
+      OSymTab.Export(modid, newSF, key);
+      OGenCode.Close(modid, key, arraySizes);
+      staticSize := OGenCode.Here();
+      Out.String("Static size:"); Out.Int(staticSize, 6);
+      bssSize := 0;
+      FOR i:=2 TO dc+1 DO bssSize := bssSize + arraySizes[i] END;
+      Out.String(", bss:"); Out.Int(bssSize, 6); Out.String(" bytes.");
+    ELSE
+      Out.Ln; Out.String("Errors found, see ERR file");
+      ComLine.Chain("ED", OScanner.inName, "")
+    END;
+    Out.Ln;
+    OSymTab.CloseScope;
+IF DEBUG THEN Out.String(" free memory : "); Out.Int(SYSTEM.FREEMEM(),5); Out.Ln END;
+  END Module;
+
+BEGIN
+  Out.String("Oberon to MCODE Compiler  23.9.2021"); Out.Ln;
+  IF OScanner.Init() THEN Module
+  ELSE Out.String("File not found."); Out.Ln
+  END;
+END Obn.
+

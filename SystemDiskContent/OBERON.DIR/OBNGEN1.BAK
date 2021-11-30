@@ -1,0 +1,755 @@
+MODULE ObnGen1;
+  (* Code generator for MCode, F.Frances 2021. CAUTION: Work In Progress *)
+IMPORT OScanner, OSymTab, SYSTEM;
+
+(* $[+ remove procedure names *)
+(* $O- remove overflow checks *)
+(* $T- remove tests *)
+
+  CONST
+    DEBUG = FALSE;
+    maxCode = 4096; (* buffer size for code, ie. max size for a single procedure *)
+    maxTD = 64;     (* max number of tagged record types *)
+    EXTENDED = 040H;(* extended opcodes prefix *)
+    Stacked = 10; Indexed = 11; Array = 12; DeRef = 13; (* item modes of this code generator *)
+(* Item forms and meaning of fields:
+    mode       r      a       b
+    ---------------------------------
+    Const      -    value    -          (immediate value)
+    Var      level   off     -               (direct adr)
+    Indirect level   off     -             (indirect adr)
+
+    Stacked    -      -      -           (value on stack)
+    Address    -     off     -            (addr on stack)
+    Indexed    -    size     -    (addr & index on stack)
+    DeRef      -      -      -            (addr on stack)
+*)
+
+  TYPE Item* = RECORD
+                mode*  : INTEGER;
+                type*  : OSymTab.Type;
+                b*, r* : INTEGER;
+                a*,msw*: INTEGER;
+                rdo*   : BOOLEAN;  (*read only*)
+               END ;
+       CodeRec* = RECORD code*: ARRAY maxCode OF BYTE END;
+       CodeBuf* = POINTER TO CodeRec;
+
+
+  VAR
+    pc*     : INTEGER;     (* program counter *)
+    codePtr : CodeBuf;   (* buffer for code generation *)
+
+  PROCEDURE Emit0*(op: INTEGER);
+  BEGIN
+    codePtr.code[pc] := op; INC(pc)
+  END Emit0;
+
+  PROCEDURE Emit1B*(op, param: INTEGER);
+  BEGIN
+    codePtr.code[pc] := op; codePtr.code[pc+1] := param; INC(pc, 2)
+  END Emit1B;
+
+  PROCEDURE EmitW*(param: INTEGER);
+  BEGIN
+    codePtr.code[pc] := param MOD 256; INC(pc);
+    codePtr.code[pc] := param DIV 256; INC(pc)
+  END EmitW;
+
+  PROCEDURE Emit1W*(op, param: INTEGER);
+  BEGIN
+    codePtr.code[pc] := op; INC(pc);
+    EmitW(param)
+  END Emit1W;
+
+  PROCEDURE Emit2B*(op, param1, param2: INTEGER);
+  BEGIN
+    codePtr.code[pc] := op; codePtr.code[pc+1] := param1; codePtr.code[pc+2] := param2; INC(pc, 3)
+  END Emit2B;
+
+  PROCEDURE PushConstant*(n: INTEGER);
+  BEGIN
+    IF (n < 0) OR (n > 255) THEN Emit1W(8EH, n)   (* LIW *)
+    ELSIF          n > 15   THEN Emit1B(8DH, n)   (* LIB *)
+    ELSE (* n <= 15 *)           Emit0 (90H + n)  (* LI0..LI15 *)
+    END;
+  END PushConstant;
+
+
+  (* loading of operands and addresses into registers *)
+
+
+  PROCEDURE loadGlobal*(offset: INTEGER);
+  BEGIN
+    IF offset <= 15
+    THEN Emit0 (40H + offset)               (* LGW2..LGW15 *)
+    ELSE Emit1B(2DH,  offset)               (* LGW n *)
+    END
+  END loadGlobal;
+
+  PROCEDURE loadExtern*(module, offset: INTEGER);
+  BEGIN
+    IF offset <= 15
+    THEN Emit1B(0CH, module * 16 + offset)  (* LEW mn *)
+    ELSE Emit2B(2FH, module, offset)        (* LEW m n *)
+    END
+  END loadExtern;
+
+  PROCEDURE loadParam*(offset: INTEGER);
+  BEGIN
+    IF offset <= 7
+    THEN Emit0 (00H + offset)   (* LPW3..LPW7 *)
+    ELSE Emit1B(2CH,  offset)   (* LLW n *)
+    END
+  END loadParam;
+
+  PROCEDURE loadVar*(VAR x: Item); (* load a variable (or parameter) *)
+  VAR offset : INTEGER;
+  BEGIN
+    offset := x.a;
+    IF (x.type.size = 4) & (x.mode # OSymTab.Indirect) THEN
+      IF    x.r > 0 THEN Emit1B(08H, offset)          (* LLD n   : locals and params *)
+      ELSIF x.r = 0 THEN Emit1B(09H, offset)          (* LGD n   : globals *)
+      ELSE               Emit2B(0BH, -1-x.r, offset)  (* LED m n : externs *)
+      END
+    ELSE (* always load a word *)
+      IF x.r > 0 THEN (* locals and params *)
+        IF offset < 0 THEN (* locals *)
+          IF offset >= -11
+          THEN Emit0 (20H - offset)            (* LLW2..LLW11 *)
+          ELSE Emit1B(2CH,  offset)            (* LLW n *)
+          END
+        ELSE loadParam(offset)
+        END
+      ELSIF x.r = 0 THEN loadGlobal(offset)
+      ELSE loadExtern(-1-x.r, offset) (* extern modules numbers in TM2R are 0-based *)
+      END
+    END
+  END loadVar;
+
+  PROCEDURE IncOrDec*(step: INTEGER; down: BOOLEAN);
+  BEGIN
+    IF step = 1 THEN
+      Emit0 (0ACH + ORD(down))                  (* INC / DEC *)
+    ELSIF step <= 255 THEN
+      Emit1B(0AEH + ORD(down), step)            (* INC n / DEC n *)
+    ELSE
+      PushConstant(step);
+      Emit0(0A6H + ORD(down))                   (* ADD / SUB *)
+    END;
+  END IncOrDec;
+
+  PROCEDURE isPower2*(m: INTEGER; VAR e: INTEGER): BOOLEAN;
+  BEGIN e := 0;
+    WHILE ~ODD(m) DO m := m DIV 2; INC(e) END ;
+    RETURN m=1
+  END isPower2;
+
+  PROCEDURE LoadAdr*(VAR x: Item);
+  VAR xmode, offset, size, e: INTEGER;
+  BEGIN
+    xmode  := x.mode;
+    offset := x.a;
+    IF  (xmode = OSymTab.Indirect)
+    OR ((xmode = OSymTab.Var) & (x.type.form IN {OSymTab.Array,OSymTab.Record})) THEN
+      loadVar(x); x.mode := Indexed
+    ELSIF xmode = OSymTab.Var THEN
+      IF    x.r = 0 THEN Emit1B(81H, offset)          (* LGA n   : global *)
+      ELSIF x.r > 0 THEN Emit1B(80H, offset)          (* LLA n   : local *)
+      ELSE               Emit2B(83H, -1-x.r, offset)  (* LEA m n : extern *)
+      END
+    ELSIF xmode = Indexed THEN (* record field *)
+      IF offset <= 255 THEN
+        IF offset # 0 THEN Emit1B(0AEH, offset) END   (* INC n *)
+      ELSE PushConstant(offset); Emit0(0A6H)          (* ADD *)
+      END;
+      x.a := 0
+    ELSIF xmode = Array THEN (* element address *)
+      size := x.type.size;
+      IF size # 1 THEN
+        IF isPower2(size, e) THEN Emit1B(0B0H, e)   (* SHL n *)
+        ELSE  PushConstant(size); Emit0 (0B8H)      (* IMUL *)
+        END
+      END;
+      Emit0(0A6H)                                   (* ADD *)
+    ELSIF xmode = DeRef THEN (* pointer, don't dereference *)
+    END ;
+  END LoadAdr;
+
+  PROCEDURE push*(VAR x: Item);
+    VAR op     : INTEGER;
+        offset : INTEGER;
+        size   : INTEGER;
+        form   : INTEGER;
+        structured: BOOLEAN;
+  BEGIN
+    size := x.type.size;
+    form := x.type.form;
+    structured := form IN {OSymTab.Array, OSymTab.Record};
+
+    IF x.mode = OSymTab.Const THEN
+      IF form = OSymTab.Proc THEN
+        PushConstant(x.a);                        (* procedure number *)
+        IF    x.r = 0 THEN Emit1B(81H, 0)         (* LGA 0  : this module's address *)
+        ELSIF x.r < 0 THEN Emit2B(83H, -1-x.r, 0) (* LEA m 0: an other module's address *)
+        END;
+      ELSIF form = OSymTab.Real THEN
+        Emit0(8FH); EmitW(x.a); EmitW(x.msw) (* LID *)
+      ELSE PushConstant(x.a)
+      END ;
+
+    ELSIF x.mode = OSymTab.Var THEN loadVar(x)    (* scalar variable *)
+
+    ELSIF x.mode = OSymTab.Indirect THEN (* load a variable *)
+      loadVar(x);
+      IF NOT structured THEN (* scalar reference *)
+        IF size = 4
+        THEN Emit0(41H)           (* LSD *)
+        ELSE Emit0(60H)           (* LSW0 *)
+        END
+      END
+
+    ELSIF x.mode = Indexed THEN
+      IF structured  THEN LoadAdr(x)
+      ELSIF size = 1 THEN PushConstant(x.a); Emit0(0DH)   (* LAB *)
+      ELSE
+        IF ODD(x.a) THEN IncOrDec(x.a, FALSE); x.a := 0 END;
+        IF size = 4 THEN
+          IF    x.a = 0   THEN Emit0 (41H)                  (* LSD *)
+          ELSIF x.a < 512 THEN Emit1B(0AH, x.a DIV 2)       (* LSD n *)
+          ELSE PushConstant(x.a); Emit0(0A6H); Emit0(41H)   (* ADD, LSD *)
+          END
+        ELSE (* size = 2 *)
+          IF    x.a <  32 THEN Emit0 (60H + x.a DIV 2)  (* LSW0..LSW15 *)
+          ELSIF x.a < 512 THEN Emit1B(2EH,  x.a DIV 2)  (* LSW n *)
+          ELSE PushConstant(x.a); Emit0(0A6H); Emit0(60H)   (* ADD, LSW0 *)
+          END
+        END
+      END
+
+    ELSIF x.mode = Array THEN
+      IF structured  THEN LoadAdr(x)
+      ELSIF size = 1 THEN Emit0(0DH)   (* LAB *)
+      ELSIF size = 2 THEN Emit0(0EH)   (* LAW *)
+      ELSE(*size = 4 *)   Emit0(0FH)   (* LAD *)
+      END
+    END;
+    x.mode := Stacked
+  END push;
+
+  (* Code generation of Assignments *)
+
+  PROCEDURE StoreGlobal*(offset: INTEGER);
+  BEGIN
+    IF offset <= 15
+    THEN Emit0 (50H + offset)             (* SGW2..SGW15 *)
+    ELSE Emit1B(3DH,  offset)             (* SGW n *)
+    END
+  END StoreGlobal;
+
+  PROCEDURE emitProcName*(id: OScanner.Ident);
+  VAR name6: ARRAY 6 OF CHAR;
+      i, j, k : INTEGER;
+    PROCEDURE Base38(c: CHAR): INTEGER;
+    VAR i: INTEGER;
+    BEGIN
+      IF    c >= "A" THEN i := ORD(c)-ORD("A")
+      ELSIF c >= "0" THEN i := ORD(c)-ORD("0")+26
+      ELSE                i := 37
+      END;
+      RETURN i
+    END Base38;
+  BEGIN
+    i := 0;
+    WHILE (i<6) & (id[i] # 0X) DO
+      IF id[i] >= 'a'
+      THEN name6[i] := CHR(ORD(id[i]) - 32)
+      ELSE name6[i] := id[i]
+      END;
+      INC(i)
+    END;
+    EmitW(Base38(name6[0]) + 38 * (Base38(name6[1]) + 38*Base38(name6[2])));
+    EmitW(Base38(name6[3]) + 38 * (Base38(name6[4]) + 38*Base38(name6[5])));
+  END emitProcName;
+
+  PROCEDURE fixShortBranch*(addr: INTEGER);
+  VAR displacement: INTEGER;
+  BEGIN
+    displacement := pc - (addr+1);
+    IF displacement > 255 THEN OScanner.Mark("branch too long")
+    ELSE codePtr.code[addr] := displacement
+    END;
+  END fixShortBranch;
+
+(* Binary operators *)
+
+  PROCEDURE Index2*(VAR x, y: Item);   (* x[y] *)
+    VAR size, lim, e: INTEGER;
+  BEGIN (* TODO produce better code for simple one-dimension arrays *)
+    size := x.type.base.size; (* element size *)
+    lim  := x.type.len;        (* dimension *)
+    IF (y.mode = OSymTab.Const) & (lim >= 0) THEN
+      IF (y.a < 0) OR (y.a >= lim) THEN OScanner.Mark("bad index") END ;
+      IF x.mode IN {OSymTab.Var, OSymTab.Indirect}
+      THEN x.a := y.a * size  (* variable has been loaded by Index1, use x.a as index *)
+      ELSE x.a := x.a + y.a * size
+      END;
+      x.mode := Indexed
+    ELSE (* index is not constant, we need the array address on stack now *)
+      IF x.mode = Indexed THEN (* array is a record field *)
+        IF x.a > 255
+        THEN PushConstant(x.a); Emit0(0A6H)  (* ADD *)
+        ELSIF x.a # 0 THEN Emit1B(0AEH, x.a) (* ADD n *)
+        END;
+      END;
+      push(y);  (* and also the index *)
+      IF OScanner.check THEN  (*check array bounds*)
+        IF lim >= 0 THEN PushConstant(lim)
+        ELSE (*open array*)
+          ASSERT(x.mode IN {OSymTab.Var, OSymTab.Indirect});
+          loadParam(x.a - 1)
+        END ;
+        Emit0(0DCH)     (* LIMITCHECK *)
+      END ;
+      IF x.type.base.form IN {OSymTab.Array, OSymTab.Record} THEN
+        (* element is itself a structured type, calculate the address *)
+        IF size # 1 THEN
+          IF isPower2(size, e) THEN Emit1B(0B0H, e)   (* SHL n *)
+          ELSE  PushConstant(size); Emit0 (0B8H)      (* IMUL *)
+          END
+        END;
+        Emit0(0A6H);        (* ADD *)
+        x.mode := Stacked
+      ELSE (* element is of scalar type, just leave index on stack *)
+        x.mode := Array
+      END
+    END;
+  END Index2;
+
+  PROCEDURE Addition*(VAR x, y: Item);   (* x := x + y *)
+  VAR op2: INTEGER;
+  BEGIN
+    IF (x.mode = OSymTab.Const) & (y.mode = OSymTab.Const) THEN
+      op2 := x.a + y.a;
+      IF OScanner.checkOvf & (y.a >= 0) & (op2 < x.a) OR (y.a < 0) & (op2 > x.a) THEN
+        OScanner.Mark("overflow")
+      END;
+      x.a := op2
+    ELSE
+      IF y.mode = OSymTab.Const THEN
+        push(x);
+        op2 := y.a;
+        IF op2 # 0 THEN
+          IF OScanner.checkOvf           THEN PushConstant(op2); Emit0(0D0H)    (* CHKADD *)
+          ELSIF  op2 = 1                 THEN Emit0 (0ACH)                      (* INC *)
+          ELSIF (op2 > 0) & (op2 <= 255) THEN Emit1B(0AEH, op2)                 (* INC n *)
+          ELSE                                PushConstant(op2); Emit0(0A6H)    (* ADD *)
+          END;
+        END;
+      ELSIF x.mode = OSymTab.Const THEN
+        push(y);
+        op2 := x.a;
+        IF op2 # 0 THEN
+          IF OScanner.checkOvf           THEN PushConstant(op2); Emit0(0D0H)    (* CHKADD *)
+          ELSIF  op2 = 1                 THEN Emit0 (0ACH)                      (* INC *)
+          ELSIF (op2 > 0) & (op2 <= 255) THEN Emit1B(0AEH, op2)                 (* INC n *)
+          ELSE                                PushConstant(op2); Emit0(0A6H)    (* ADD *)
+          END;
+        END;
+      ELSE
+        push(x); push(y);
+        IF y.type = OSymTab.longType THEN Emit0(0C6H)           (* DADD *)
+        ELSIF OScanner.checkOvf      THEN Emit0(0D0H)           (* CHKADD *)
+        ELSE                              Emit0(0A6H)           (* ADD *)
+        END
+      END;
+      x.mode := Stacked
+    END;
+  END Addition;
+
+  PROCEDURE Substract*(VAR x, y: Item);   (* x := x - y *)
+  VAR op2: INTEGER;
+  BEGIN
+    IF y.mode = OSymTab.Const THEN
+      op2 := y.a;
+      IF op2 # 0 THEN
+        IF OScanner.checkOvf           THEN PushConstant(op2); Emit0(0D1H)  (* CHKSUB *)
+        ELSIF  op2 = 1                 THEN Emit0 (0ADH)                    (* DEC *)
+        ELSIF (op2 > 0) & (op2 <= 255) THEN Emit1B(0AFH, op2)               (* DEC n *)
+        ELSE                                PushConstant(op2); Emit0 (0A7H) (* SUB *)
+        END;
+      END;
+    ELSE
+      push(y);
+      IF y.type = OSymTab.longType
+      THEN Emit0(0C7H)          (* DSUB *)
+      ELSE Emit0(0A7H)          (* SUB *)
+      END
+    END;
+  END Substract;
+
+  PROCEDURE Multiply*(VAR x, y: Item);   (* x := x * y *)
+    VAR e: INTEGER;
+        op2: INTEGER;
+  BEGIN
+    IF    (x.mode = OSymTab.Const) & (y.mode = OSymTab.Const) THEN x.a := x.a * y.a
+    ELSIF  y.mode = OSymTab.Const THEN (* multiply by a constant *)
+      push(x);
+      op2 := y.a;
+      IF (op2 >= 2) & isPower2(op2, e) THEN Emit1B(0B0H, e)     (* SHL n *)
+      ELSE               PushConstant(op2); Emit0 (0B8H)        (* IMUL *)
+      END;
+    ELSIF x.mode = OSymTab.Const THEN (* first operand is constant *)
+      push(y);
+      x.mode := Stacked;
+      op2    := x.a;
+      IF (op2 >= 2) & isPower2(op2, e) THEN Emit1B(0B0H, e)     (* SHL n *)
+      ELSE               PushConstant(op2); Emit0 (0B8H)        (* IMUL *)
+      END;
+    ELSE
+      push(x); push(y);
+      IF y.type = OSymTab.longType THEN Emit0(0C8H)             (* DMUL *)
+      ELSIF OScanner.checkOvf      THEN Emit0(0C2H)             (* CHKMUL *)
+      ELSE                              Emit0(0B8H)             (* IMUL *)
+      END
+    END
+  END Multiply;
+
+  PROCEDURE Divide*(VAR x, y: Item);   (* x := x DIV y *)
+    VAR e: INTEGER;
+        op2 : INTEGER;
+  BEGIN
+    IF y.mode = OSymTab.Const THEN (* divide by a constant *)
+      op2 := y.a;
+      IF op2 <= 0 THEN OScanner.Mark("Bad divisor")
+      ELSIF (op2 >= 2) & isPower2(op2, e) THEN Emit2B(EXTENDED, 30, e)  (* ASR n *)
+      ELSE                  PushConstant(op2); Emit0 (0B9H)             (* IDIV *)
+      END;
+    ELSE
+      push(y);
+      IF y.type = OSymTab.longType
+      THEN Emit0(0C9H)                  (* DDIV *)
+      ELSE Emit0(0B9H)                  (* IDIV *)
+      END
+    END;
+  END Divide;
+
+  PROCEDURE Modulo*(VAR x, y: Item);   (* x := x MOD y *)
+    VAR e: INTEGER;
+        op2 : INTEGER;
+  BEGIN
+    IF y.mode = OSymTab.Const THEN (* divide by a constant *)
+      op2 := y.a;
+      IF op2 <= 0 THEN OScanner.Mark("Bad modulus")
+      ELSIF (op2 >= 2) & isPower2(op2, e)
+      THEN PushConstant(op2-1); Emit0(0E8H)    (* BITAND *)
+      ELSE PushConstant(op2);   Emit0(0AAH)    (* UMOD *)
+      END;
+    ELSE
+      push(y);
+      IF y.type = OSymTab.longType
+      THEN Emit0(0CAH)         (* DMOD *)
+      ELSE Emit0(0AAH)         (* UMOD *)
+      END
+    END;
+  END Modulo;
+
+  PROCEDURE Set*(VAR x, y: Item);   (* x := {x .. y} *)
+  BEGIN
+    IF (x.mode = OSymTab.Const) & ((x.a < 0) OR (x.a > 15))
+    OR (y.mode = OSymTab.Const) & ((y.a < 0) OR (y.a > 15)) THEN
+      OScanner.Mark('bad set element')
+    END;
+    IF (x.mode = OSymTab.Const) & (y.mode = OSymTab.Const) THEN
+      IF   x.a <= y.a
+      THEN x.a := SYSTEM.VAL(INTEGER, {x.a .. y.a})
+      ELSE x.a := 0
+      END
+    ELSE
+      IF y.mode = OSymTab.Const THEN
+        push(x);
+        PushConstant(y.a)
+      ELSIF x.mode = OSymTab.Const THEN
+        push(y);
+        PushConstant(x.a);
+        Emit0(21H);         (* SWAP *)
+      ELSE
+        push(x); push(y);
+      END;
+      Emit1B(EXTENDED, 4);  (* RANGE *)
+      x.mode := Stacked
+    END
+  END Set;
+
+  PROCEDURE In*(VAR x, y: Item);  (* x := x IN y *)
+  BEGIN
+    IF (x.mode = OSymTab.Const) & (y.mode = OSymTab.Const) THEN
+      x.a := ORD(x.a IN SYSTEM.VAL(SET, y.a))
+    ELSE
+      push(y);
+      IF x.mode = OSymTab.Const THEN
+        PushConstant(SYSTEM.VAL(INTEGER, {x.a}));
+        Emit0(0E8H);      (* BITAND *)
+        Emit0(0CBH);      (* NE0 *)
+      ELSE Emit0(0E7H)    (* INSET *)
+      END;
+      x.mode := Stacked
+    END
+  END In;
+
+  PROCEDURE Store2*(VAR x, y: Item); (* x := y *)
+    VAR op: INTEGER;
+        offset: INTEGER;
+        size  : INTEGER;
+  BEGIN
+    size := x.type.size;
+    push(y);
+    IF x.mode = OSymTab.Var THEN (* store in a variable *)
+      offset := x.a;
+      IF size = 4 THEN
+        IF    x.r > 0 THEN Emit1B(18H, offset)          (* SLD n  : local *)
+        ELSIF x.r = 0 THEN Emit1B(19H, offset)          (* SGD n  : global *)
+        ELSE               Emit2B(1BH, -1-x.r, offset)  (* SED m n: extern *)
+        END;
+      ELSE
+        IF x.r > 0 THEN (* locals and params *)
+          IF offset < 0 THEN (* locals *)
+            IF offset >= -11
+            THEN Emit0 (30H -offset)            (* SLW2..SLW11 *)
+            ELSE Emit1B(3CH, offset)            (* SLW n *)
+            END;
+          ELSE (* params *)
+            IF offset <= 7
+            THEN Emit0 (10H + offset)           (* SPW3..SPW7 *)
+            ELSE Emit1B(3CH,  offset)           (* SLW n *)
+            END
+          END
+        ELSIF x.r = 0 THEN StoreGlobal(offset)
+        ELSE (* extern *)
+          IF offset <= 15
+          THEN Emit1B(0DH,  (-1-x.r) * 16 + offset)     (* SEW mn *)
+          ELSE Emit2B(3FH, -1-x.r, offset)              (* SEW m n *)
+          END;
+        END;
+      END;
+    ELSIF x.mode = OSymTab.Indirect THEN (* VAR parameter, address already on stack *)
+      IF size = 4
+      THEN Emit0(51H)       (* SSD *)
+      ELSE Emit0(70H)       (* SSW0 *)
+      END
+    ELSIF x.mode = Indexed THEN (* address already on stack *)
+      IF    size = 1 THEN Emit0(1DH) (* SAB, address and index were already on stack *)
+      ELSIF size = 2 THEN
+        IF ODD(x.a) OR (x.a < 0) OR (x.a >= 512) THEN Emit0(70H) (* SSW0, address already on stack *)
+        ELSIF x.a <  32 THEN Emit0 (70H + x.a DIV 2)    (* SSW0..SSW15 *)
+        ELSE                     Emit1B(3EH,  x.a DIV 2)    (* SSW n *)
+        END
+      ELSIF size = 4 THEN
+        IF ODD(x.a) OR (x.a < 0) OR (x.a >= 512)
+        THEN Emit0 (51H)                (* SSD, address already on stack *)
+        ELSE Emit1B(1AH, x.a DIV 2)     (* SSD n *)
+        END
+      END
+    ELSIF x.mode = Array THEN (* address and index already on stack *)
+      IF    size = 1 THEN Emit0(1DH)   (* SAB *)
+      ELSIF size = 2 THEN Emit0(1EH)   (* SAW *)
+      ELSIF size = 4 THEN Emit0(1FH)   (* SAD *)
+      END
+    END
+  END Store2;
+
+  PROCEDURE StoreStruct*(VAR x, y: Item); (* x := y *)
+    VAR s, pc0, e: INTEGER;
+  BEGIN
+    (* assuming address of x is already on stack *)
+    IF y.type.size # 0 THEN (* empty records exist *)
+      IF y.type.form = OSymTab.Pointer THEN push(y) ELSE LoadAdr(y) END;
+      IF (x.type.form = OSymTab.Array) &  (x.type.len > 0) THEN
+        IF y.type.len >= 0 THEN
+          IF x.type.size = y.type.size THEN PushConstant(y.type.size)
+          ELSE OScanner.Mark("different length/size, not implemented")
+          END
+        ELSE (*y  open array*)
+          loadParam(y.a - 1);  (* load open array's size *)
+          Emit0(0ACH);              (* INC *)
+          s := y.type.base.size;  (*element size*)
+          IF isPower2(s, e) THEN
+            IF s # 1 THEN Emit1B(0B0H, e) END       (* SHL n *)
+          ELSE
+            PushConstant(s); Emit0(0B8H)            (* IMUL *)
+          END;
+        END
+      ELSIF x.type.form = OSymTab.Record THEN PushConstant(x.type.size)
+      ELSE OScanner.Mark("inadmissible assignment")
+      END ;
+      Emit0(30H)            (* BYTCPY *)
+    END ;
+  END StoreStruct;
+
+  PROCEDURE Increment*(VAR x, y: Item);
+    VAR down, simpleVar: BOOLEAN;
+        step : INTEGER;
+  BEGIN
+    simpleVar := (x.mode = OSymTab.Var);
+    step      := ABS(y.a);
+    down      := (y.a < 0);
+    IF simpleVar
+    THEN push(x); x.mode := OSymTab.Var
+    ELSE LoadAdr(x); Emit0(20H); Emit0(60H)     (* DUP, LSW0 *)
+    END;
+    IncOrDec(step, down);
+
+    IF simpleVar
+    THEN y.mode := Stacked; Store2(x,y)
+    ELSE Emit0(70H)    (* SSW0 *)
+    END
+  END Increment;
+
+  PROCEDURE InclOrExcl*(include: BOOLEAN; VAR x, y: Item);
+    VAR op, zr: INTEGER;
+  BEGIN
+    IF x.mode = OSymTab.Var THEN push(x); x.mode := OSymTab.Var
+    ELSE LoadAdr(x); Emit0(20H); Emit0(60H)     (* DUP, LSW0 *)
+    END;
+    IF (y.mode = OSymTab.Const) & (y.a >= 0) & (y.a <= 15) THEN
+      IF include
+      THEN PushConstant(SYSTEM.VAL(INTEGER, {y.a}));           Emit0(0E6H)  (* BITOR *)
+      ELSE PushConstant(SYSTEM.VAL(INTEGER, {0..15} - {y.a})); Emit0(0E8H)  (* BITAND *)
+      END
+    ELSE
+      push(y);
+      IF include
+      THEN Emit0(0E6H)              (* BITOR *)
+      ELSE Emit0(0B7H); Emit0(0E8H) (* COMPL, BITAND *)
+      END;
+    END;
+    y.mode := Stacked; Store2(x,y)
+  END InclOrExcl;
+
+  PROCEDURE Store1*(VAR x: Item); (* x := *)
+    VAR offset: INTEGER;
+  BEGIN
+    IF x.type.form IN {OSymTab.Array, OSymTab.Record} THEN (* StoreStruct will be called afterwards *)
+      LoadAdr(x)
+    ELSIF x.mode = Indexed THEN
+      IF    x.type.size = 1 THEN PushConstant(x.a) (* Store2 will emit a SAB *)
+      ELSIF ODD(x.a) OR (x.a < 0) OR (x.a >= 512) THEN
+        PushConstant(x.a); Emit0(0A6H) (* ADD, Store2 will emit a SSW or SSD *)
+        (* if x.a < 512 then the offset will be coded in Store2's opcode *)
+      END
+    ELSIF x.mode = OSymTab.Indirect THEN (* store in a VAR parameter: push the reference on stack *)
+      offset := x.a;
+      IF offset <= 7
+      THEN Emit0 (00H + offset)     (* LPW3..LPW7 *)
+      ELSE Emit1B(2CH, offset)      (* LLW n *)
+      END;
+    END;
+  END Store1;
+
+  PROCEDURE Neg*(VAR x: Item);   (* x := -x *)
+  VAR tmp : LONGINT;
+  BEGIN
+    IF x.mode = OSymTab.Const THEN
+      IF    x.type = OSymTab.realType THEN
+        tmp   := SYSTEM.VAL(LONGINT, -SYSTEM.VAL(REAL, LONG(x.msw, x.a)));
+        x.a   := LSW(tmp);
+        x.msw := MSW(tmp);
+      ELSIF x.type = OSymTab.setType  THEN x.a := -x.a - 1
+      ELSE                                 x.a := -x.a
+      END
+    ELSE
+      push(x);
+      IF    x.type = OSymTab.realType THEN (* TODO: define a new opcode instead *)
+        Emit0 (21H);            (* SWAP *)
+        Emit2B(8EH, 0, 80H);    (* LIW 8000H *)
+        Emit0 (0A6H);           (* ADD *)
+        Emit0 (21H)             (* SWAP *)
+      ELSIF x.type = OSymTab.longType THEN Emit1B(EXTENDED, 3)      (* DNEG *)
+      ELSIF x.type = OSymTab.setType  THEN Emit0(0B7H)              (* COMPL *)
+      ELSE                                 Emit0(0B7H); Emit0(0ACH) (* COMPL, INC *)
+      END
+    END
+  END Neg;
+
+  PROCEDURE Singleton*(VAR x: Item);  (* x := {x} *)
+  BEGIN
+    IF x.mode = OSymTab.Const THEN
+      IF (x.a < 0) OR (x.a > 15) THEN OScanner.Mark('bad set element')
+      ELSE x.a := SYSTEM.VAL(INTEGER, {x.a})
+      END
+    ELSE push(x); Emit0(0EAH)        (* POWER2 *)
+    END
+  END Singleton;
+
+  PROCEDURE StrToChar*(VAR x: Item); (* single-char string's first char *)
+  BEGIN
+    x.mode  := OSymTab.Const;
+    x.type  := OSymTab.charType;
+    x.a     := x.msw;  (* first char was stored in string Item *)
+  END StrToChar;
+
+  PROCEDURE Call*(VAR x: Item);
+  VAR procNum: INTEGER;
+  BEGIN
+    (* NB: x.type.form = OSymTab.Proc *)
+    IF x.mode = OSymTab.Const THEN (* not a procedure variable *)
+      procNum := x.a;
+      IF x.r >= 0 THEN (* procedure in current module *)
+        (* CHECK we don't need to differentiate inner procedures *)
+        IF procNum < 16
+        THEN Emit0 (0F0H + procNum)         (* CALL0..CALL15 *)
+        ELSE Emit1B(0EDH,  procNum)         (* CALL n *)
+        END;
+      ELSE (* imported procedure *)
+        IF procNum < 16  (* imported modules numbers are 0-based in TM2R *)
+        THEN Emit1B(0F0H, (-1-x.r) * 16 + procNum)  (* EXTCALL1 mn *)
+        ELSE Emit2B(0EFH, -1-x.r, procNum)          (* EXTCALL2 m n *)
+        END;
+      END;
+    ELSE (* procedure variable *)
+      push(x);
+      Emit0(0EBH)                                   (* EXTCALL0 *)
+    END;
+
+    IF x.type.base.form # OSymTab.NoTyp THEN (* function result is on stack *)
+      x.mode := Stacked
+    END
+  END Call;
+
+  PROCEDURE Abs*(VAR x: Item);
+  BEGIN
+    IF x.mode = OSymTab.Const THEN x.a := ABS(x.a)
+    ELSE
+      push(x);
+      IF x.type = OSymTab.realType THEN
+        Emit0(21H);             (* SWAP *)
+        PushConstant(7FFFH);
+        Emit0(0E8H);            (* BITAND *)
+        Emit0(21H)              (* SWAP *)
+      ELSE Emit0(0BCH)          (* IABS *)
+      END
+    END
+  END Abs;
+
+  PROCEDURE Len*(VAR x: Item);
+  BEGIN
+    IF x.type.len >= 0 THEN
+      x.mode := OSymTab.Const;
+      x.a    := x.type.len;
+      x.type := OSymTab.intType
+    ELSE
+      loadParam(x.a - 1);  (* load open array limit *)
+      Emit0(0ACH);         (* OPINC *)
+      x.mode := Stacked
+    END
+  END Len;
+
+  PROCEDURE SetPC*(val: INTEGER);
+  BEGIN pc := val
+  END SetPC;
+
+  PROCEDURE Init*():CodeBuf;
+  BEGIN pc := 0; NEW(codePtr); RETURN codePtr
+  END Init;
+
+END ObnGen1.
