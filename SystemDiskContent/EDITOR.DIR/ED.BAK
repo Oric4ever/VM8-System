@@ -1,0 +1,8 @@
+MODULE ED;
+FROM Editor  IMPORT editPosition, Edit;
+IMPORT ComLine;
+BEGIN
+  ComLine.PromptFor("File to edit: ", ComLine.inName);
+  editPosition := 0;
+  Edit;
+END ED.
