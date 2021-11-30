@@ -1,0 +1,34 @@
+DEFINITION MODULE Doubles;
+FROM Texts IMPORT TEXT;
+
+VAR legal: BOOLEAN;
+
+(* 9 procs unused but declarations kept: 
+   READ/READLN of LONGREAL generate a call to proc #10 (StrToDouble)
+ *)
+ PROCEDURE qtod(r: LONGREAL): LONGINT;
+ PROCEDURE qtof(r: LONGREAL): REAL;
+ PROCEDURE dtoq(l: LONGINT) : LONGREAL;
+ PROCEDURE ftoq(r: REAL)    : LONGREAL;
+
+ PROCEDURE qcp(r1: LONGREAL; r2: LONGREAL): LONGINT;
+ PROCEDURE qadd(r1,r2: LONGREAL): LONGREAL;
+ PROCEDURE qsub(r1,r2: LONGREAL): LONGREAL;
+ PROCEDURE qmul(r1,r2: LONGREAL): LONGREAL;
+ PROCEDURE qdiv(r1,r2: LONGREAL): LONGREAL;
+
+ PROCEDURE StrToDouble (VAR s: ARRAY OF CHAR; VAR r: LONGREAL) : BOOLEAN;
+
+(* 2 procs unused but declarations kept:
+   WRITE/WRITELN of LONGREAL generate a call to proc #13 (DoubleToStr)
+ *)
+ PROCEDURE qneg(r: LONGREAL): LONGREAL;
+ PROCEDURE qabs(r: LONGREAL): LONGREAL;
+
+ PROCEDURE DoubleToStr (r: LONGREAL; VAR s: ARRAY OF CHAR; digits: INTEGER);
+
+ PROCEDURE  ReadDouble (t: TEXT; VAR r: LONGREAL);
+ PROCEDURE WriteDouble (t: TEXT; r: LONGREAL; n: CARDINAL; digits: INTEGER);
+ 
+END Doubles.
+

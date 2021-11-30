@@ -1,0 +1,13 @@
+MODULE Coroutines;
+TYPE
+    Coroutine* = POINTER TO CoroutineDesc;
+    Body*      = PROCEDURE;
+    CoroutineDesc = RECORD END; (* hidden content *)
+    
+PROCEDURE Init*(body: Body; wrkSize: INTEGER; VAR corout: Coroutine);
+BEGIN END Init;
+
+PROCEDURE Transfer*(VAR from, to: Coroutine);
+BEGIN END Transfer;
+
+END Coroutines.

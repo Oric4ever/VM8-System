@@ -1,0 +1,29 @@
+MODULE Loader;
+(* Oberon stub for Modula2 Loader module :
+   compilation will overwrite LOADER.MCD, so recompile the Modula2 module afterwards,
+   and copy the version number from LOADER.SYM to LOADER.SMB
+ *)
+
+IMPORT Files;
+TYPE Extension* = ARRAY 3 OF CHAR;
+
+(*  1 *) PROCEDURE InitLibs*  ();
+         BEGIN END InitLibs;
+
+(*  2 *) PROCEDURE LibOpen*   (f: Files.FILE; fname: ARRAY OF CHAR; symfile: BOOLEAN)  : BOOLEAN;
+         BEGIN RETURN FALSE END LibOpen;
+
+(*  3 *) PROCEDURE FileSearch*(f: Files.FILE; fname: ARRAY OF CHAR;     ext: Extension): BOOLEAN;
+         BEGIN RETURN FALSE END FileSearch;
+
+(*  4 *) PROCEDURE LibRead*   (f: Files.FILE; addr : INTEGER;        nbytes: INTEGER)  : BOOLEAN;
+         BEGIN RETURN FALSE END LibRead;
+
+(*  5 *) PROCEDURE NLibs*     (): INTEGER;
+         BEGIN RETURN 0 END NLibs;
+
+(*  6 *) PROCEDURE Call*      (modName: ARRAY OF CHAR);
+         BEGIN END Call;
+
+END Loader.
+

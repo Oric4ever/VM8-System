@@ -1,0 +1,7 @@
+DEFINITION MODULE Coroutines;
+FROM SYSTEM IMPORT PROCESS;
+
+PROCEDURE Init(body: PROC; wrkSize: CARDINAL; VAR corout: PROCESS);
+PROCEDURE Transfer(VAR from, to: PROCESS);
+
+END Coroutines.

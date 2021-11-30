@@ -1,0 +1,83 @@
+MODULE Files;
+IMPORT FATDIR;
+(* Oberon stub for Modula-2 Files module.
+ *)
+ TYPE
+      FILE*   = POINTER TO FileDescriptor;
+
+      ADDRESS = INTEGER;
+      WORD    = INTEGER;
+      LBA     = LONGINT;
+      Cluster = LONGINT;
+      FileDescriptor =
+        RECORD
+          marker      : INTEGER;
+          ptr         : ADDRESS;
+          bufferEnd   : ADDRESS; (* must be ADR(buffer)+512 *)
+          pos         : LONGINT;
+          bufferDirty : BOOLEAN;
+          currCluster : Cluster;
+          currentSect : LBA;  (* linear sector number from the beginning of file *)
+          entry       : FATDIR.Entry;
+          buffer      : ARRAY 512 OF BYTE;
+        END;
+
+
+ PROCEDURE Open*        (VAR f: FILE; name: ARRAY OF CHAR): BOOLEAN;
+ BEGIN RETURN FALSE END Open;
+
+ PROCEDURE Create*      (VAR f: FILE; name: ARRAY OF CHAR);
+ BEGIN END Create;
+
+ PROCEDURE Close*       (VAR f: FILE);
+ BEGIN END Close;
+
+ PROCEDURE Delete*      (VAR f: FILE);
+ BEGIN END Delete;
+
+ PROCEDURE Rename*      (VAR f: FILE; name: ARRAY OF CHAR);
+ BEGIN END Rename;
+
+ PROCEDURE GetName*     (f: FILE; VAR name: ARRAY OF CHAR);
+ BEGIN END GetName;
+
+ PROCEDURE FileSize*    (f: FILE): LONGINT;
+ BEGIN RETURN LONG(0) END FileSize;
+
+ PROCEDURE EOF*         (f: FILE): BOOLEAN;
+ BEGIN RETURN FALSE END EOF;
+
+ PROCEDURE ReadByte*    (f: FILE; VAR ch: BYTE);
+ BEGIN END ReadByte;
+
+ PROCEDURE ReadWord*    (f: FILE; VAR w : WORD);
+ BEGIN END ReadWord;
+
+ PROCEDURE ReadRec*     (f: FILE; VAR rec: ARRAY OF WORD);
+ BEGIN END ReadRec;
+
+ PROCEDURE ReadBytes*   (f: FILE; buf: ADDRESS; nbytes: INTEGER): INTEGER;
+ BEGIN RETURN 0 END ReadBytes;
+
+ PROCEDURE WriteByte*   (f: FILE; ch: BYTE);
+ BEGIN END WriteByte;
+
+ PROCEDURE WriteWord*   (f: FILE;  w: WORD);
+ BEGIN END WriteWord;
+
+ PROCEDURE WriteRec*    (f: FILE; VAR rec: ARRAY OF WORD);
+ BEGIN END WriteRec;
+
+ PROCEDURE WriteBytes*  (f: FILE; buf: ADDRESS; nbytes: INTEGER);
+ BEGIN END WriteBytes;
+
+ PROCEDURE Flush*       (f: FILE);
+ BEGIN END Flush;
+
+ PROCEDURE NextPos*     (f: FILE): LONGINT;
+ BEGIN RETURN LONG(0) END NextPos;
+
+ PROCEDURE SetPos*      (f: FILE; pos: LONGINT);
+ BEGIN END SetPos;
+END Files.
+

@@ -1,0 +1,17 @@
+IMPLEMENTATION MODULE Coroutines;
+FROM SYSTEM IMPORT NEWPROCESS, TRANSFER, ADDRESS;
+FROM STORAGE IMPORT ALLOCATE;
+
+PROCEDURE Init(body: PROC; wrksize: CARDINAL; VAR corout: PROCESS);
+VAR wrkspace: ADDRESS;
+BEGIN
+  ALLOCATE(wrkspace, wrksize);
+  NEWPROCESS(body, wrkspace, wrksize, corout);
+END Init;
+
+PROCEDURE Transfer(VAR from, to: PROCESS);
+BEGIN
+  TRANSFER(from, to)
+END Transfer;
+
+END Coroutines.

@@ -1,0 +1,23 @@
+MODULE ComLine;
+IMPORT Texts;
+
+VAR commandLine*    : Texts.TEXT;
+    inName*,outName*: ARRAY 20 OF CHAR;
+    progName*       : ARRAY 8 OF CHAR;
+    execute*        : INTEGER;
+    codepos*        : INTEGER;
+
+PROCEDURE RedirectInput*;
+BEGIN END RedirectInput;
+
+PROCEDURE RedirectOutput*;
+BEGIN END RedirectOutput;
+
+PROCEDURE PromptFor*(prompt: ARRAY OF CHAR; VAR s: ARRAY OF CHAR);
+BEGIN END PromptFor;
+
+PROCEDURE Chain*(prog,in,out: ARRAY OF CHAR);
+BEGIN END Chain;
+
+END ComLine.
+

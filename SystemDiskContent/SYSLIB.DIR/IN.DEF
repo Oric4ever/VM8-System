@@ -1,0 +1,22 @@
+DEFINITION MODULE In;
+
+VAR Done: BOOLEAN;
+
+PROCEDURE Char (VAR ch: CHAR);
+ (* Done := Not past end of input *)
+
+PROCEDURE Int  (VAR x: INTEGER);
+ (* Reads integer as in Texts. Done := integer was read *)
+
+PROCEDURE Long (VAR x: LONGINT);
+ (* Reads integer as in Texts. Done := integer was read *)
+
+PROCEDURE Real (VAR x: REAL);
+
+PROCEDURE String(VAR s: ARRAY OF CHAR);
+
+PROCEDURE Name (VAR s: ARRAY OF CHAR);
+ (* Reads string as in Texts. Done := the returned string is not empty *)
+
+END In.
+
