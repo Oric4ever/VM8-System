@@ -1,0 +1,31 @@
+MODULE MathLib;
+
+ PROCEDURE Sqrt     (x: REAL): REAL;
+ BEGIN RETURN 0.0 END Sqrt;
+
+ PROCEDURE Exp      (x: REAL): REAL;
+ BEGIN RETURN 0.0 END Exp;
+
+ PROCEDURE Ln       (x: REAL): REAL;
+ BEGIN RETURN 0.0 END Ln;
+
+ PROCEDURE Sin      (x: REAL): REAL;
+ BEGIN RETURN 0.0 END Sin;
+
+ PROCEDURE Cos      (x: REAL): REAL;
+ BEGIN RETURN 0.0 END Cos;
+
+ PROCEDURE Arctan   (x: REAL): REAL;
+ BEGIN RETURN 0.0 END Arctan;
+
+ PROCEDURE Entier   (x: REAL): INTEGER;
+ BEGIN RETURN 0 END Entier;
+
+ PROCEDURE Randomize(n: INTEGER);
+ BEGIN END Randomize;
+
+ PROCEDURE Random  ( ): REAL;
+ BEGIN RETURN 0.0 END Random;
+
+END MathLib.
+

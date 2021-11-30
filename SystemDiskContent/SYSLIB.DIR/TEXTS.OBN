@@ -1,0 +1,49 @@
+MODULE Texts;
+ IMPORT Files;
+
+(* CONST EOL* = 1EX; (* TODO: fix strings export and import *) *)
+
+ TYPE TEXT*       = INTEGER; (* in range 1..16 *)
+      TextDriver* = PROCEDURE(text: TEXT; VAR ch: CHAR);
+
+ VAR input*,output*,console*: TEXT;
+     haltOnControlC* : BOOLEAN;  (* TRUE by default *)
+
+ (* EXCEPTION TextNotOpen, TooManyTexts; *)
+
+ PROCEDURE ReadChar*    (t: TEXT;   VAR ch: CHAR);                          BEGIN END ReadChar;
+ PROCEDURE ReadString*  (t: TEXT;   VAR s : ARRAY OF CHAR);                 BEGIN END ReadString;
+ PROCEDURE ReadInt*     (t: TEXT;   VAR i : INTEGER);                       BEGIN END ReadInt;
+ PROCEDURE ReadCard*    (t: TEXT;   VAR c : INTEGER);                       BEGIN END ReadCard;
+ PROCEDURE ReadLong*    (t: TEXT;   VAR l : LONGINT);                       BEGIN END ReadLong;
+ PROCEDURE ReadReal*    (t: TEXT;   VAR r : REAL);                          BEGIN END ReadReal;
+ PROCEDURE ReadLn*      (t: TEXT);                                          BEGIN END ReadLn;
+
+ PROCEDURE WriteChar*   (t: TEXT;       ch: CHAR);                          BEGIN END WriteChar;
+ PROCEDURE WriteString* (t: TEXT;       s : ARRAY OF CHAR);                 BEGIN END WriteString;
+ PROCEDURE WriteInt*    (t: TEXT;       i : INTEGER;  n: INTEGER);          BEGIN END WriteInt;
+ PROCEDURE WriteCard*   (t: TEXT;       c,n:INTEGER);                       BEGIN END WriteCard;
+ PROCEDURE WriteLong*   (t: TEXT;       l : LONGINT;  n: INTEGER);          BEGIN END WriteLong;
+ PROCEDURE WriteReal*   (t: TEXT;       r : REAL;     n, digits: INTEGER);  BEGIN END WriteReal;
+ PROCEDURE WriteLn*     (t: TEXT);                                          BEGIN END WriteLn;
+
+ PROCEDURE ReadLine*    (t: TEXT;   VAR s : ARRAY OF CHAR);                 BEGIN END ReadLine;
+ PROCEDURE ReadAgain*   (t: TEXT);                                          BEGIN END ReadAgain;
+
+ PROCEDURE Done*        (t: TEXT):  BOOLEAN;                                BEGIN RETURN FALSE END Done;
+ PROCEDURE EOLN*        (t: TEXT):  BOOLEAN;                                BEGIN RETURN FALSE END EOLN;
+ PROCEDURE EOT*         (t: TEXT):  BOOLEAN;                                BEGIN RETURN FALSE END EOT;
+ PROCEDURE Col*         (t: TEXT):  INTEGER;                                BEGIN RETURN 0     END Col;
+ PROCEDURE SetCol*      (t: TEXT;   column: INTEGER);                       BEGIN END SetCol;
+ PROCEDURE TextFile*    (t: TEXT):  Files.FILE;                             BEGIN RETURN NIL   END TextFile;
+
+ PROCEDURE OpenText*    (VAR t: TEXT; name: ARRAY OF CHAR): BOOLEAN;        BEGIN RETURN FALSE END OpenText;
+ PROCEDURE CreateText*  (VAR t: TEXT; name: ARRAY OF CHAR);                 BEGIN END CreateText;
+ PROCEDURE CloseText*   (VAR t: TEXT);                                      BEGIN END CloseText;
+
+ PROCEDURE ConnectDriver*(VAR t: TEXT; p: TextDriver);                      BEGIN END ConnectDriver;
+
+ PROCEDURE Init*;  (* used only by system *)                                BEGIN END Init;
+
+END Texts.
+

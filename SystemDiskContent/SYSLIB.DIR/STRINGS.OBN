@@ -1,0 +1,120 @@
+MODULE Strings;
+IMPORT SYSTEM;
+
+(* $[+ remove procedure names *)
+
+PROCEDURE Length*(str: ARRAY OF CHAR): INTEGER;
+VAR i: INTEGER;
+BEGIN
+  i := 0; WHILE str[i] # 0X DO INC(i) END;
+  RETURN i
+END Length;
+
+PROCEDURE Pos*    (substr,s: ARRAY OF CHAR; pos: INTEGER): INTEGER;
+VAR n : INTEGER; first, ch: CHAR;
+BEGIN
+  ASSERT( pos >= 0 );
+  ASSERT( pos < LEN(s) );
+  DEC(pos); first := substr[0];
+  REPEAT
+    INC(pos);
+    n := 0; ch := first;
+    WHILE (ch # 0X) & (s[pos + n] = ch) DO INC(n); ch := substr[n] END;
+  UNTIL (ch = 0X) OR (s[pos + n] = 0X);
+  IF ch # 0X THEN pos := -1 END;
+  RETURN pos
+END Pos;
+
+PROCEDURE Insert*(src : ARRAY OF CHAR; pos: INTEGER; VAR dst: ARRAY OF CHAR);
+(** Insert(src, pos, dst) inserts the string src into the string dst at position 
+    pos (0 <= pos <= Length(dst)). If pos = Length(dst), src is appended to dst.
+    If the size of dst is not large enough to hold the result of the operation, 
+    the result is truncated so that dst is always terminated with a 0X.
+ *)
+VAR srclen, dstlen, nbMoved: INTEGER;
+BEGIN
+  dstlen  := Length(dst);
+  ASSERT( pos >= 0 );
+  ASSERT( pos <= dstlen );
+  srclen  := Length(src);
+  IF pos + srclen < LEN(dst) - 1 THEN (* at least one byte to shift *)
+    nbMoved := dstlen - pos + 1; (* counting final 0X *)
+    IF dstlen + srclen >= LEN(dst) THEN nbMoved := LEN(dst) - (pos + srclen) END;
+    SYSTEM.COPY(SYSTEM.ADR(dst)+pos, SYSTEM.ADR(dst)+pos+srclen, nbMoved)
+  ELSE
+    srclen := LEN(dst) - 1 - pos;
+    dst[LEN(dst)-1] := 0X
+  END;
+  SYSTEM.COPY(SYSTEM.ADR(src), SYSTEM.ADR(dst)+pos, srclen)
+END Insert;
+
+PROCEDURE Delete*(VAR s: ARRAY OF CHAR; pos,n: INTEGER);
+(** Delete(s, pos, n) deletes n characters from s starting at position pos
+    (0 <= pos <= Length(s)). If n > Length(s) - pos, the new length of s is pos.
+ *)
+VAR nbMoved, len: INTEGER;
+BEGIN
+  len := Length(s);
+  ASSERT(pos >= 0);
+  ASSERT(pos <= len);
+  ASSERT( n  >= 0);
+  nbMoved := len + 1 - (pos + n);
+  IF nbMoved <= 0 THEN s[pos] := 0X
+  ELSE SYSTEM.COPY(SYSTEM.ADR(s)+pos+n, SYSTEM.ADR(s)+pos, nbMoved)
+  END
+END Delete;
+
+PROCEDURE Replace*(source: ARRAY OF CHAR; pos: INTEGER; VAR dest: ARRAY OF CHAR);
+(** Replace(src, pos, dst) has the same effect as Delete(dst, pos, Length(src)) followed by an Insert(src, pos, dst).*)
+VAR srclen, dstlen, maxMoved: INTEGER;
+BEGIN
+  dstlen := Length(dest);
+  ASSERT( pos >= 0 );
+  ASSERT( pos <= dstlen );
+  srclen := Length(source);
+  maxMoved := LEN(dest) - 1 - pos;
+  IF srclen > maxMoved THEN srclen := maxMoved END;
+  SYSTEM.COPY(SYSTEM.ADR(source), SYSTEM.ADR(dest)+pos, srclen);
+  IF srclen = maxMoved THEN dest[LEN(dest) - 1] := 0X END;
+END Replace;
+
+PROCEDURE Append* (extra : ARRAY OF CHAR; VAR dst: ARRAY OF CHAR);
+(** Append(s, dst) has the same effect as Insert(s, Length(dst), dst). *)
+VAR dstlen, extralen, available: INTEGER;
+BEGIN
+  dstlen    := Length(dst);
+  extralen  := Length(extra);
+  available := LEN(dst) - 1 - dstlen;
+  IF available < extralen THEN extralen := available END;
+  SYSTEM.COPY(SYSTEM.ADR(extra), SYSTEM.ADR(dst)+dstlen, extralen);
+  IF extralen = available THEN dst[LEN(dst)-1] := 0X END;
+END Append;
+
+PROCEDURE Extract*(source: ARRAY OF CHAR; pos,n: INTEGER;
+                   VAR dest: ARRAY OF CHAR);
+(** Extract(src, pos, n, dst) extracts a substring dst with n characters from position pos (0 <= pos <= Length(src)) in src. If n > Length(src) - pos, dst is only the part of src from pos to the end of src, i.e. Length(src) - 1. If the size of dst is not large enough to hold the result of the operation, the result is truncated so that dst is always terminated with a 0X.*)
+VAR srclen: INTEGER;
+BEGIN
+  srclen := Length(source);
+  ASSERT(pos >= 0);
+  ASSERT(pos <= srclen);
+  ASSERT( n  >= 0);
+  IF n > srclen - pos THEN n := srclen - pos  END;
+  IF n > LEN(dest)-1  THEN n := LEN(dest) - 1 END;
+  SYSTEM.COPY(SYSTEM.ADR(source)+pos, SYSTEM.ADR(dest), n);
+  dest[n] := 0X
+END Extract;
+
+PROCEDURE Cap*(VAR str: ARRAY OF CHAR);
+VAR i: INTEGER; ch: CHAR;
+BEGIN
+  i := 0; ch := str[0];
+  WHILE ch # 0X DO
+    IF (ch >= "a") & (ch <= "z") THEN str[i] := CHR(ORD(ch) - 32) END;
+    INC(i);
+    ch := str[i]
+  END
+END Cap;
+
+END Strings.
+

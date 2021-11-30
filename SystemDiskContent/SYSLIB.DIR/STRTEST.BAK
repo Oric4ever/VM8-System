@@ -1,0 +1,17 @@
+MODULE StrTest;
+IMPORT Strings, Out;
+
+VAR s: ARRAY 10 OF CHAR;
+    n: INTEGER;
+
+BEGIN
+  s := "Hello";
+  Out.String(s); Out.Ln;
+
+  Out.String("len ="); Out.Int(Strings.Length(s), 2); Out.Ln;
+
+  Strings.Cap(s); Out.String(s); Out.Ln;
+
+  Strings.Append("you", s);
+  Out.String(s); Out.Ln;
+END StrTest.

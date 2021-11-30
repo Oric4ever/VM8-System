@@ -1,0 +1,14 @@
+DEFINITION MODULE Out;
+(* Write different types to the terminal *)
+
+PROCEDURE Char  (ch: CHAR);
+PROCEDURE String(s: ARRAY OF CHAR);
+PROCEDURE Int   (i, n: INTEGER);         (* writes i in a right-adjusted field of n characters *)
+PROCEDURE Card  (i, n: INTEGER);
+PROCEDURE Long  (l: LONGINT; n: INTEGER);
+PROCEDURE Hex   (i: INTEGER);            (* writes a zero-padded hex number with a leading space *)
+PROCEDURE Real  (x: REAL; n: INTEGER);   (* writes a real number with ABS(n) digits, in scientific
+                                            notation if n is negative *)
+PROCEDURE Ln;                            (* writes a Carriage Return followed by a Line Feed *)
+
+END Out.

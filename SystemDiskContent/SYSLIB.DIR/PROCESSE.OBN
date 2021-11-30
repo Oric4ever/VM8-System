@@ -1,0 +1,29 @@
+MODULE Processes;
+
+ TYPE SIGNAL* = POINTER TO SignalDesc;
+      PROC*   = PROCEDURE();
+
+      SignalDesc = RECORD
+                    next, nextWaiting: SIGNAL;
+                    process: INTEGER; (* actually it's a PROCESS *)
+                    running: BOOLEAN;
+                   END;
+
+ PROCEDURE StartProcess*(P: PROC; wrksize: INTEGER);
+ BEGIN END StartProcess;
+
+ PROCEDURE SEND*        (VAR s: SIGNAL);
+ BEGIN END SEND;
+
+ PROCEDURE WAIT*        (VAR s: SIGNAL);
+ BEGIN END WAIT;
+
+ PROCEDURE Awaited*     (s: SIGNAL): BOOLEAN;
+ BEGIN RETURN FALSE END Awaited;
+
+ PROCEDURE Init*        (VAR s: SIGNAL);
+ BEGIN END Init;
+
+
+END Processes.
+

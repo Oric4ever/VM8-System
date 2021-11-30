@@ -1,0 +1,51 @@
+MODULE Out;
+IMPORT Texts;
+
+PROCEDURE Char*  (ch: CHAR);
+BEGIN Texts.WriteChar(Texts.output, ch)
+END Char;
+
+PROCEDURE String*(s: ARRAY OF CHAR);
+BEGIN Texts.WriteString(Texts.output, s)
+END String;
+
+PROCEDURE Int*   (i, n: INTEGER);
+BEGIN Texts.WriteInt(Texts.output, i, n)
+END Int;
+
+PROCEDURE Card*  (i, n: INTEGER);
+BEGIN Texts.WriteCard(Texts.output, i, n)
+END Card;
+
+PROCEDURE Long*  (l: LONGINT; n: INTEGER);
+BEGIN Texts.WriteLong(Texts.output, l, n)
+END Long;
+
+PROCEDURE Hex*   (i: INTEGER);
+  PROCEDURE HexByte(i: BYTE);
+    PROCEDURE HexDigit(i: BYTE);
+    BEGIN
+      IF i < 10
+      THEN Char(CHR(i + ORD('0')))
+      ELSE Char(CHR(i + ORD('A') - 10))
+      END
+    END HexDigit;
+  BEGIN
+    HexDigit(i DIV 16);
+    HexDigit(i MOD 16);
+  END HexByte;
+BEGIN
+  Char(' ');
+  HexByte( i DIV 256 );
+  HexByte( i MOD 256 );
+END Hex;
+
+PROCEDURE Real*  (x: REAL; width, digits: INTEGER);
+BEGIN Texts.WriteReal(Texts.output, x, width, digits)
+END Real;
+
+PROCEDURE Ln*;
+BEGIN Texts.WriteLn(Texts.output)
+END Ln;
+
+END Out.

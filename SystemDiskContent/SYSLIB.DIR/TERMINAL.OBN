@@ -1,0 +1,62 @@
+MODULE Terminal;
+
+CONST   clearEol* = 0; insertDelete* = 1; highlightNormal* = 2;
+
+VAR numRows*, numCols* : INTEGER;
+    available* : SET; (* of clearEol, insertDelete, highlightNormal *)
+
+PROCEDURE ReadChar*(VAR ch: CHAR);
+BEGIN END ReadChar;
+
+PROCEDURE BusyRead*(VAR ch: CHAR);
+BEGIN END BusyRead;
+
+PROCEDURE ReadAgain*;
+BEGIN END ReadAgain;
+
+PROCEDURE ReadLine*(VAR s: ARRAY OF CHAR);
+BEGIN END ReadLine;
+
+PROCEDURE WriteChar*(ch: CHAR);
+BEGIN END WriteChar;
+
+PROCEDURE WriteLn*;
+BEGIN END WriteLn;
+
+PROCEDURE WriteString*(s: ARRAY OF CHAR);
+BEGIN END WriteString;
+
+PROCEDURE ClearScreen*;
+BEGIN END ClearScreen;
+
+PROCEDURE GotoXY*(col,row: INTEGER);
+BEGIN END GotoXY;
+
+PROCEDURE InitScreen*;
+BEGIN END InitScreen;
+
+PROCEDURE ExitScreen*;
+BEGIN END ExitScreen;
+
+PROCEDURE ClearToEOL*;
+BEGIN END ClearToEOL;
+
+PROCEDURE InsertLine*;
+BEGIN END InsertLine;
+
+PROCEDURE DeleteLine*;
+BEGIN END DeleteLine;
+
+PROCEDURE Highlight*;
+BEGIN END Highlight;
+
+PROCEDURE Normal*;
+BEGIN END Normal;
+
+(*
+PROCEDURE CursorOff;
+PROCEDURE CursorOn;
+PROCEDURE WriteCard(val: INTEGER);
+*)
+END Terminal.
+
