@@ -1,0 +1,6 @@
+MODULE Reboot;
+IMPORT SYSTEM, FAT32;
+BEGIN
+  FAT32.UnmountFS;
+  SYSTEM.BIOS(0,0)
+END Reboot.

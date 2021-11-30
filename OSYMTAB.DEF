@@ -1,0 +1,5 @@
+DEFINITION MODULE OSymTab;
+
+VAR universe: INTEGER;
+
+END OSymTab.
