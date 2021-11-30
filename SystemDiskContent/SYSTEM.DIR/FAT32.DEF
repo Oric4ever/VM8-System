@@ -1,0 +1,41 @@
+DEFINITION MODULE FAT32;
+(*
+  Minimal FAT32 filesystem handling:
+    - no partitions: FAT32 filesystem occupies full disk
+    - assumes 2 FATs
+
+  F.Frances 2020
+*)
+FROM SYSTEM IMPORT ADDRESS;
+FROM Disk   IMPORT LBA;
+
+TYPE Cluster  = LONGINT;
+
+VAR firstRootCluster, endCluster: Cluster;
+    bufferFS: ADDRESS;
+
+(* Internal FileSystem calls. Should only be called by the Kernel *)
+PROCEDURE WriteFS;
+PROCEDURE ReadFS(sector: LBA);
+PROCEDURE InitFS;
+PROCEDURE UnmountFS;
+PROCEDURE SyncFS;
+
+(* Cluster-related routines *)
+PROCEDURE ClusterToLBA   (cluster: Cluster): LBA;
+PROCEDURE Fragment       (lba : LBA): CARDINAL;
+PROCEDURE ReadFragment   (cluster: Cluster; fragment: CARDINAL; buf: ADDRESS);
+PROCEDURE WriteFragment  (cluster: Cluster; fragment: CARDINAL; buf: ADDRESS);
+
+(* FAT-related routines *)
+PROCEDURE GetFATentry    (cluster: Cluster): Cluster;
+PROCEDURE PutFATentry    (cluster, next    : Cluster);
+PROCEDURE DeleteChain    (cluster: Cluster);
+PROCEDURE FindFreeCluster(): Cluster;
+PROCEDURE NextSector     (VAR cluster: Cluster; VAR sector: LBA; extendChain: BOOLEAN): BOOLEAN;
+PROCEDURE SkipSectors    (VAR cluster: Cluster; VAR sector: LBA; nbSectors: LONGINT);
+
+EXCEPTION DiskFull;
+
+END FAT32.
+

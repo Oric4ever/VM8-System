@@ -1,0 +1,36 @@
+DEFINITION MODULE InitMod;
+FROM SYSTEM   IMPORT BYTE, ADDRESS;
+
+TYPE FLAGS      = (OVERLAY, Z80, TOINIT, RECURSEFLAG);
+     FlagSet    = SET OF FLAGS;
+     FlagSetPtr = POINTER TO FlagSet;
+     ModDescPtr = POINTER TO ModuleDesc;
+     Name       = ARRAY [0..7] OF CHAR;
+     ModuleDesc = RECORD
+                    dependencies: ARRAY [0..31] OF ADDRESS;
+                    link        : ModDescPtr;
+                    name        : Name;
+                    loadAddr    : ADDRESS;
+                    checksum    : ADDRESS;
+                    procsAddr   : ADDRESS;
+                    CASE : CARDINAL OF
+                    | 1 : flags : FlagSet;
+                    | 2 : bytes : ARRAY [0..3] OF BYTE;
+                        (* byte 0: flags
+                           byte 1: nb of vars
+                           byte 2: ?
+                           byte 3: nb of dependencies
+                        *)
+                    END;
+                  END;
+
+(* initializes the modules that requires it.
+   The called module will be the last one initialized, thus run...
+   wsp shall be the current heap pointer.
+*)
+PROCEDURE InitModules(upToModule: ModDescPtr);
+
+(* Allocate the global arrays and records of freshly loaded module *)
+PROCEDURE AllocArrays(upToModule: ModDescPtr);
+
+END InitMod.

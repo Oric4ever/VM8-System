@@ -1,0 +1,109 @@
+IMPLEMENTATION MODULE InitMod;
+FROM SYSTEM   IMPORT WORD, ADR, NEWPROCESS, TRANSFER, TSIZE;
+FROM STORAGE  IMPORT ALLOCATE;
+
+TYPE Context = RECORD
+                w0, w1, w2, w3 : WORD;
+                StackLimit : ADDRESS;
+                (* other context words omitted *)
+               END;
+     ContextPtr = POINTER TO Context;
+
+VAR callerTask [0308H]: ContextPtr;
+    calledTask [030AH]: ContextPtr;
+    module1    [030CH]: ModDescPtr;
+    modulePtr         : ModDescPtr;
+    proc : RECORD
+             CASE : CARDINAL OF
+             | 1: proc : PROC;
+             | 2: module,procAddr: CARDINAL;
+             END
+           END;
+
+(* $[+ *)
+
+(* initializes the modules that requires it.
+   The called module will be the last one initialized, thus run...
+*)
+PROCEDURE InitModules(upToModule: ModDescPtr);
+BEGIN
+  modulePtr := module1;
+  WHILE modulePtr <> upToModule DO
+    proc.module   := ADDRESS(modulePtr) + 80;
+    proc.procAddr := 0; (* procnum of INIT is 0 *)
+    proc.proc();
+    modulePtr     := modulePtr^.link;
+  END;
+(* old version using coroutines
+  modulePtr := module1;
+  WHILE modulePtr <> upToModule DO
+    IF TOINIT IN modulePtr^.flags THEN
+      proc.module   := ADDRESS(modulePtr) + 80;
+      proc.procAddr := 0; (* procnum of INIT is 0 *)
+      (* create a process, giving it all memory from current alloc addr *)
+      NEWPROCESS(proc.proc, wsp, ADR(proc)-80-ADDRESS(wsp), calledTask);
+      TRANSFER(callerTask, calledTask);
+      (* once the init is finished (opcode 50), get the new heap ptr by peeking it
+         directly in the context of the finished process *)
+      wsp := calledTask^.StackLimit - 60;
+    END;
+    modulePtr := modulePtr^.link;
+  END;
+*)
+END InitModules;
+
+PROCEDURE AllocArrays(fromModule, upToModule: ModDescPtr);
+VAR modulePtr : ModDescPtr;
+    varCount, varSize  : CARDINAL;
+    globalVarsPtr : POINTER TO ARRAY [0..32767] OF ADDRESS;
+BEGIN
+  (* allocate memory for global arrays and records *)
+  modulePtr := fromModule;
+  WHILE modulePtr <> upToModule DO
+    varCount := ORD(modulePtr^.bytes[1]);
+    globalVarsPtr := ADDRESS(modulePtr) + TSIZE(ModuleDesc);
+    WHILE varCount # 0 DO
+      DEC(varCount);
+      varSize := globalVarsPtr^[varCount];
+      IF varSize # 0 THEN ALLOCATE(globalVarsPtr^[varCount], varSize) END;
+    END;
+    modulePtr := modulePtr^.link;
+  END;
+
+(* old version without ALLOCATE
+  modulePtr := module1;
+  WHILE success AND (modulePtr <> upToModule) DO
+    varCount := ORD(modulePtr^.bytes[1]);
+    globalVarsPtr := ADDRESS(modulePtr) + TSIZE(ModuleDesc);
+    WHILE success AND (varCount <> 0) DO
+      DEC(varCount);
+      varSize := globalVarsPtr^[varCount];
+      IF varSize <> 0 THEN
+        (* $O+ *)
+        IF allocAddr + varSize + 100 > ADR(name) THEN
+        (* $O- *)
+          errorMsg := OUTOFMEMORYMSG;
+          loadSuccess := FALSE
+        ELSE
+          FILL(allocAddr, varSize, 0);
+          globalVarsPtr^[varCount] := CARDINAL(allocAddr);
+          allocAddr := allocAddr + varSize;
+        END;
+      END;
+    END;
+    modulePtr := modulePtr^.link;
+  END;
+*)
+END AllocArrays;
+
+BEGIN
+  AllocArrays(module1^.link, NIL);
+  (* save a frame on stack by doing the loop here instead of using InitModules *)
+  modulePtr := module1^.link; (* skip *this* module ! *)
+  WHILE modulePtr # NIL DO
+    proc.module   := ADDRESS(modulePtr) + 80;
+    proc.procAddr := 0; (* procnum of INIT is 0 *)
+    proc.proc();  (* call the module's INIT *)
+    modulePtr     := modulePtr^.link;
+  END;
+END InitMod.

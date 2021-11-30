@@ -1,0 +1,31 @@
+MODULE FileDesc;
+ IMPORT FATDIR;
+
+ TYPE LBA     = LONGINT;
+      Cluster = LONGINT;
+      ADDRESS = INTEGER;
+      FileDescriptor =
+        RECORD
+          marker      : INTEGER;
+          ptr         : ADDRESS;
+          bufferEnd   : ADDRESS; (* must be ADR(buffer)+512 *)
+          pos         : LONGINT;
+          bufferDirty : BOOLEAN;
+          currCluster : Cluster;
+          currentSect : LBA;  (* linear sector number from the beginning of file *)
+          entry       : FATDIR.Entry;
+          buffer      : ARRAY 512 OF BYTE;
+        END;
+      File* = POINTER TO FileDescriptor;
+
+ PROCEDURE InitFile*  (f: File);
+ BEGIN END InitFile;
+ 
+ PROCEDURE FindFile*  (f: File): BOOLEAN;
+ BEGIN RETURN FALSE END FindFile;
+ 
+ PROCEDURE ReadBuffer*(f: File);
+ BEGIN END ReadBuffer;
+
+END FileDesc.
+
