@@ -14,7 +14,7 @@ TRY IT:
 
 1. Download the virtual machine for Linux and compile it (make). It should work without modification on Linux, Android (in Termux), Windows (with Cygwin).
 
-2. Download the system.dsk in the same directory as the virtual machine interpreters, it is an image of a FAT32 filesystem with my current small operating system pre-installed in it. You can check the contents of this image:
+2. Download the zipped system disk and extract it (system.dsk) in the same directory as the virtual machine interpreters, it is an image of a FAT32 filesystem with my current small operating system pre-installed in it. You can check the contents of this image:
 
 - file system.dsk reveals it has 128 reserved sectors (the system image is installed in the reserved sectors), apart from this it is a normal FAT32 filesystem.
 - you can access the contents with the mtools on Linux, or mount this disk image (e.g sudo mount -o loop system.dsk /mnt). For convenience, this repository has shows all the files of this disk.
@@ -41,4 +41,4 @@ or have a look at a small demonstration video: https://youtu.be/5Qu8TZNxHn0
 
 STATUS:
 This is not the publicly released version yet, it lacks documentation and I intend to deliver a new shell in the spirit of Midnight Commander.
-It's not finished also because I might abandon Turbo Modula-2 Reloaded in favor of Oberon-07 in the future, so that will allow me to furthermore reduce the size of the system. The rationale behing the abandon of TM2R is that I don't have the sources (only the part that I have decompiled, and the result is not always readable). Also my code generator for Oberon is very good now, and I'm aiming for the simplest system possible...
+It's not finished also because I might abandon Turbo Modula-2 Reloaded in favor of Oberon-07 in the future, so that will allow me to furthermore reduce the size of the system. The rationale behind the abandon of TM2R is that I don't have the sources (only the part that I have decompiled, and the result is not always readable). Also my code generator for Oberon is very good now, and I'm aiming for the simplest system possible...
