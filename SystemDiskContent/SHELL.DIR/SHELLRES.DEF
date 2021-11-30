@@ -1,0 +1,8 @@
+DEFINITION MODULE ShellRes;
+FROM FATDIR IMPORT Directory;
+
+VAR tabNames  : ARRAY [0..3],[0..16] OF CHAR;
+    tabDirs   : ARRAY [0..3] OF Directory;
+    currentTab: CARDINAL;
+
+END ShellRes.
