@@ -1,0 +1,13 @@
+disk newfat32 fatdir excepts editor terminal loader texts +
+files editdisk comline editpos
+doubles editor
+symtab editor
+compiler editor
+obnsymb editor
+edit2 loader
+errors1 loader
+codegen loader
+obnscan loader
+convert editdisk
+scanner editdisk
+
