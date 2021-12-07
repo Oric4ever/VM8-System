@@ -1,0 +1,111 @@
+MODULE Adv05;
+IMPORT Files, Texts, Out, SYSTEM;
+TYPE Line = ARRAY 1000 OF BYTE;
+VAR t: Texts.TEXT;
+    map: Files.FILE;
+    i: INTEGER;
+
+PROCEDURE Swap(VAR a,b: INTEGER);
+VAR tmp: INTEGER;
+BEGIN
+  tmp := a; a := b; b := tmp
+END Swap;
+
+PROCEDURE InitMap;
+VAR line: Line;
+    i: INTEGER;
+BEGIN
+  Files.Create(map, "map.dat");
+  FOR i:=0 TO 999 DO line[i]:=0 END;
+  FOR i:=0 TO 999 DO Files.WriteBytes(map, SYSTEM.ADR(line), 1000) END;
+END InitMap;
+
+PROCEDURE AddPoint(x,y: INTEGER);
+VAR pos: LONGINT;
+    value: BYTE;
+BEGIN
+  pos := LONG(y)*LONG(1000)+LONG(x);
+  Files.SetPos  (map, pos);
+  Files.ReadByte(map, value);
+  INC(value);
+  Files.SetPos   (map, pos);
+  Files.WriteByte(map, value);
+END AddPoint;
+
+PROCEDURE ReadLines;
+VAR n,x1,y1,x2,y2,x,y: INTEGER;
+    line: Line;
+    pos: LONGINT;
+BEGIN
+  FOR n:=1 TO 500 DO
+    Texts.ReadInt(t, x1); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, y1); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, x2); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, y2); ASSERT( Texts.Done(t) );
+    Texts.ReadLn (t);
+    IF    x1 = x2 THEN (* vertical *)
+      IF y1 > y2 THEN Swap(y1,y2) END;
+      FOR y := y1 TO y2 DO AddPoint(x1, y) END;
+    ELSIF y1 = y2 THEN (* horizontal *)
+      IF x1 > x2 THEN Swap(x1,x2) END;
+      pos := LONG(y1)*LONG(1000);
+      Files.SetPos(map, pos);
+      x := Files.ReadBytes(map, SYSTEM.ADR(line), 1000);
+      FOR x := x1 TO x2 DO INC(line[x]) END;
+      Files.SetPos(map, pos);
+      Files.WriteBytes(map, SYSTEM.ADR(line), 1000);
+    END
+  END
+END ReadLines;
+
+PROCEDURE ReadDiagonals;
+VAR n,x1,y1,x2,y2,x,y,dx: INTEGER;
+    line: Line;
+    pos: LONGINT;
+BEGIN
+  FOR n:=1 TO 500 DO
+    Texts.ReadInt(t, x1); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, y1); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, x2); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, y2); ASSERT( Texts.Done(t) );
+    Texts.ReadLn (t);
+    IF (x1 # x2) AND (y1 # y2) THEN
+      IF y1 > y2 THEN Swap(y1,y2); Swap(x1,x2) END;
+      IF x1 > x2 THEN dx := -1 ELSE dx := +1 END;
+      x := x1;
+      FOR y := y1 TO y2 DO AddPoint(x, y); x := x + dx END;
+    END
+  END
+END ReadDiagonals;
+
+PROCEDURE CountMap(): INTEGER;
+VAR x,y,count: INTEGER;
+    line: Line;
+BEGIN
+  count := 0;
+  Files.SetPos(map, LONG(0));
+  FOR y:=0 TO 999 DO
+    x := Files.ReadBytes(map, SYSTEM.ADR(line), 1000);
+    FOR x:=0 TO 999 DO
+      IF line[x] > 1 THEN INC(count) END
+    END
+  END;
+  RETURN count
+END CountMap;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.05") );
+  InitMap;
+  ReadLines;
+  Texts.CloseText(t);
+  Out.String("Part A: ");
+  Out.Card( CountMap(), 5);
+  Out.Ln;
+
+  ASSERT( Texts.OpenText(t, "input.05") );
+  ReadDiagonals;
+  Out.String("Part B: ");
+  Out.Card( CountMap(), 5);
+  Out.Ln;
+END Adv05.
+

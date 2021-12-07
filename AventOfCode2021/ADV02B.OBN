@@ -1,0 +1,20 @@
+MODULE Adv02b;
+IMPORT Texts, Out, ComLine;
+VAR aim, horiz, depth, count: LONGINT;
+  command: ARRAY 16 OF CHAR;
+  t : Texts.TEXT;
+BEGIN
+  IF Texts.OpenText(t, "input.02") THEN
+    Texts.ReadString(t, command);
+    WHILE NOT Texts.EOT(t) DO
+      Texts.ReadLong(t, count);
+      IF    command = "forward" THEN horiz := horiz + count; depth := depth + aim * count
+      ELSIF command = "down"    THEN aim := aim + count
+      ELSIF command = "up"      THEN aim := aim - count
+      ELSE Out.String("error")
+      END;
+      Texts.ReadString(t, command)
+    END;
+    Out.Long(horiz*depth,8)
+  END;
+END Adv02b.

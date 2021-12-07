@@ -1,0 +1,32 @@
+MODULE Adv03a;
+IMPORT Texts, Out;
+CONST SIZE=12;
+VAR
+  gamma, epsilon, i, n, power2: INTEGER;
+  count: ARRAY SIZE OF INTEGER;
+  string: ARRAY 16 OF CHAR;
+  t : Texts.TEXT;
+BEGIN
+  Out.Int(SIZE, 5); Out.Ln;
+  IF Texts.OpenText(t, "input.03") THEN
+    Texts.ReadString(t, string);
+    Out.String(string); Out.Ln;
+    WHILE NOT Texts.EOT(t) DO
+      INC(n);
+      FOR i := 0 TO SIZE-1 DO
+        IF string[i] = "1" THEN INC(count[i]) END
+      END;
+      Texts.ReadString(t, string)
+    END;
+    power2 := 1;
+    FOR i := SIZE-1 TO 0 BY -1 DO
+      Out.Int(count[i], 4); Out.Ln;
+      IF count[i] > n DIV 2
+      THEN gamma   := gamma + power2
+      ELSE epsilon := epsilon + power2
+      END;
+      power2 := power2 * 2;
+    END;
+    Out.Long(LONG(gamma)*LONG(epsilon), 8); Out.Ln
+  END;
+END Adv03a.

@@ -1,0 +1,19 @@
+MODULE Adv01b;
+IMPORT In, Out, ComLine;
+VAR lastsum, sum, count: INTEGER;
+    window: ARRAY 3 OF INTEGER;
+    i: INTEGER;
+BEGIN
+  ComLine.RedirectInput;
+  FOR i:=0 TO 2 DO In.Int(window[i]) END;
+  lastsum := window[0] + window[1] + window[2];
+
+  i := 3; In.Int(window[i MOD 3]);
+  WHILE In.Done DO
+    sum := window[0] + window[1] + window[2];
+    IF sum > lastsum THEN INC(count) END;
+    lastsum := sum;
+    INC(i); In.Int(window[i MOD 3])
+  END;
+  Out.Int(count,5)
+END Adv01b.

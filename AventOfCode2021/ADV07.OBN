@@ -1,0 +1,59 @@
+MODULE Adv07;
+IMPORT Texts, Out, SYSTEM;
+CONST N=1000;
+VAR t: Texts.TEXT;
+    i, n, target: INTEGER;
+    sum, best : LONGINT;
+    x : ARRAY N OF INTEGER;
+    costB: ARRAY 2000 OF LONGINT;
+
+PROCEDURE CostA(target: INTEGER):LONGINT;
+VAR n: INTEGER;
+    sum: LONGINT;
+BEGIN
+  sum := LONG(0);
+  FOR n := 1 TO N DO sum := sum + LONG(ABS(target - x[n-1])) END;
+  RETURN sum
+END CostA;
+
+PROCEDURE InitCostsB;
+VAR n: INTEGER;
+BEGIN
+  FOR n := 1 TO LEN(costB)-1 DO costB[n] := costB[n-1] + LONG(n)  END;
+END InitCostsB;
+
+PROCEDURE CostB(target: INTEGER):LONGINT;
+VAR n, dist: INTEGER;
+    sum: LONGINT;
+BEGIN
+  sum := LONG(0);
+  FOR n := 1 TO 1000 DO
+    dist := ABS(target - x[n-1]);
+    sum := sum + costB[dist]
+  END;
+  RETURN sum
+END CostB;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.07") );
+  FOR n:=1 TO N DO
+    Texts.ReadInt(t, x[n-1]); ASSERT( Texts.Done(t) );
+    sum := sum + LONG(x[n-1])
+  END;
+  target := INT( (sum + LONG(500)) DIV LONG(1000) );
+
+  best := CostA(target);
+  sum  := CostA(target-1);
+  WHILE sum < best DO DEC(target); best := sum; sum := CostA(target-1) END;
+  sum  := CostA(target+1);
+  WHILE sum < best DO INC(target); best := sum; sum := CostA(target+1) END;
+  Out.String("Part A: "); Out.Long( best, 8); Out.Ln;
+
+  InitCostsB;
+  best := CostB(target);
+  sum  := CostB(target-1);
+  WHILE sum < best DO DEC(target); best := sum; sum := CostB(target-1) END;
+  sum  := CostB(target+1);
+  WHILE sum < best DO INC(target); best := sum; sum := CostB(target+1) END;
+  Out.String("Part B: "); Out.Long( best, 8); Out.Ln;
+END Adv07.
