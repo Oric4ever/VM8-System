@@ -1,0 +1,108 @@
+MODULE Adv08;
+IMPORT Texts,Out;
+VAR t: Texts.TEXT;
+    n, i, j, count: INTEGER;
+    separator: ARRAY 2 OF CHAR;
+    sets   : ARRAY 10 OF SET;
+    digits : ARRAY 10 OF SET;
+    display: ARRAY  4 OF SET;
+    sum : LONGINT;
+
+PROCEDURE ReadSet(): SET;
+VAR str: ARRAY 8 OF CHAR;
+    i: INTEGER;
+    set: SET;
+BEGIN
+  Texts.ReadString(t, str);
+  i := 0; set := {};
+  WHILE (str[i] # 0X) DO
+    set := set + {ORD(str[i]) - ORD("a")};
+    INC(i)
+  END;
+  RETURN set
+END ReadSet;
+
+PROCEDURE nbSegments(set: SET):INTEGER;
+VAR i, nb: INTEGER;
+BEGIN
+  nb := 0;
+  FOR i := 0 TO 6 DO
+    IF i IN set THEN INC(nb) END
+  END;
+  RETURN nb
+END nbSegments;
+
+PROCEDURE Solve;
+VAR segsADG, segsABFG: SET;
+    segA, segB, segC, segD, segE, segF, segG: SET;
+    i, nbSegs : INTEGER;
+BEGIN
+  segsADG  := {0,1,2,3,4,5,6}; (* will become intersection of digits 2,3,5 *)
+  segsABFG := {0,1,2,3,4,5,6}; (* will become intersection of digits 0,6,9 *)
+  FOR i := 0 TO 9 DO
+    nbSegs := nbSegments(sets[i]);
+    CASE nbSegs OF
+    | 2: digits[1] := sets[i]
+    | 3: digits[7] := sets[i]
+    | 4: digits[4] := sets[i]
+    | 5: segsADG   := sets[i] * segsADG
+    | 6: segsABFG  := sets[i] * segsABFG
+    | 7: digits[8] := sets[i]
+    END
+  END;
+  segA := digits[7] - digits[1];
+  segB := digits[4] - digits[1] - segsADG;
+  segD := digits[4] - digits[1] - segB;
+  segG := segsADG   - segA - segD;
+  segF := segsABFG  - segA - segB - segG;
+  segC := digits[1] - segF;
+  segE := digits[8] - digits[4] - segsABFG;
+  digits[0] := digits[8] - segD;
+  digits[2] := segsADG + segC + segE;
+  digits[3] := segsADG + digits[1];
+  digits[5] := segsADG + segB + segF;
+  digits[6] := digits[8] - segC;
+  digits[9] := digits[8] - segE;
+END Solve;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.08") );
+  count := 0;
+  FOR n := 1 TO 200 DO
+    FOR i := 0 TO 9 DO sets[i] := ReadSet() END;
+    Texts.ReadString(t, separator);
+    FOR i := 0 TO 3 DO display[i] := ReadSet() END;
+    Texts.ReadLn(t);
+
+    Solve;
+    FOR i := 0 TO 3 DO
+      IF (display[i] = digits[1])
+      OR (display[i] = digits[4])
+      OR (display[i] = digits[7])
+      OR (display[i] = digits[8])
+      THEN INC(count)
+      END
+    END
+  END;
+  Out.Int(count, 5); Out.Ln;
+
+  ASSERT( Texts.OpenText(t, "input.08") );
+  FOR n := 1 TO 200 DO
+    FOR i := 0 TO 9 DO sets[i] := ReadSet() END;
+    Texts.ReadString(t, separator);
+    FOR i := 0 TO 3 DO display[i] := ReadSet() END;
+    Texts.ReadLn(t);
+
+    Solve;
+    count := 0;
+    FOR i := 0 TO 3 DO
+      count := count * 10;
+      FOR j := 0 TO 9 DO
+        IF display[i] = digits[j] THEN count := count + j END
+      END;
+    END;
+    sum := sum + LONG(count);
+  END;
+  Out.Long(sum, 9); Out.Ln;
+
+END Adv08.
