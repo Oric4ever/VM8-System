@@ -490,7 +490,10 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
           ELSE OScanner.Mark("bad type")
           END
         ELSIF ORD(f) IN {OSymTab.Int, OSymTab.Long, OSymTab.Set, OSymTab.Real} THEN
-          OGenCode.Unary(Expr1, x);
+          IF f = OSymTab.Set 
+          THEN OGenCode.Unary(Commut1, x)   (* XOR is commutative *)
+          ELSE OGenCode.Unary(Expr1, x)
+          END;
           factor(y);
           IF    f = OSymTab.Int  THEN CheckInt (y)
           ELSIF f = OSymTab.Long THEN CheckLong(y)
@@ -520,11 +523,11 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
       VAR y: OGenCode.Item; op,f: INTEGER;
     BEGIN
       op := sym;
-      IF (op = OScanner.minus) OR (op = OScanner.plus) THEN 
+      IF (op = OScanner.minus) OR (op = OScanner.plus) THEN
         NextToken;
         term(x);
         IF x.type.form IN {OSymTab.Int, OSymTab.Long, OSymTab.Real, OSymTab.Set}
-        THEN 
+        THEN
           IF op = OScanner.minus THEN OGenCode.Unary(Neg, x) END
         ELSE OScanner.Mark("bad type")
         END
@@ -532,11 +535,14 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
       END ;
       WHILE (sym >= OScanner.plus) & (sym <= OScanner.or) DO
         op := sym; NextToken;
-        IF op = OScanner.or THEN 
+        IF op = OScanner.or THEN
           OGenCode.Unary(Or1, x); CheckBool(x); term(y); CheckBool(y); OGenCode.Binary(Or2, x, y)
         ELSE
           f := x.type.form;
-          IF op = OScanner.minus THEN OGenCode.Unary(Expr1, x) ELSE OGenCode.Unary(Commut1, x) END;
+          IF (op = OScanner.minus) & (f # OSymTab.Set) 
+          THEN OGenCode.Unary(Expr1, x) 
+          ELSE OGenCode.Unary(Commut1, x) 
+          END;
           term(y);
           IF    f = OSymTab.Int  THEN CheckInt (y)
           ELSIF f = OSymTab.Long THEN CheckLong(y)

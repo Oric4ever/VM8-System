@@ -266,12 +266,13 @@ IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
       END ;
       x.a := SYSTEM.VAL(INTEGER, xset);
     ELSE
+      push(y);
+      IF    op = OScanner.minus THEN Emit0(0B7H) END; (* COMPL *)
       IF x.mode = OSymTab.Const THEN push(x) END;
-      IF y.mode = OSymTab.Const THEN push(y) END;
-      IF    op = OScanner.plus  THEN Emit0(0E6H)                (* BITOR *)
-      ELSIF op = OScanner.minus THEN Emit0(0B7H); Emit0(0E8H)   (* COMPL, BITAND *)
-      ELSIF op = OScanner.times THEN Emit0(0E8H)                (* BITAND *)
-      ELSIF op = OScanner.rdiv  THEN Emit0(0E9H)                (* BITXOR *)
+      IF    op = OScanner.plus  THEN Emit0(0E6H)   (* BITOR *)
+      ELSIF op = OScanner.minus THEN Emit0(0E8H)   (* BITAND *)
+      ELSIF op = OScanner.times THEN Emit0(0E8H)   (* BITAND *)
+      ELSIF op = OScanner.rdiv  THEN Emit0(0E9H)   (* BITXOR *)
       END ;
     END
   END SetOp;
