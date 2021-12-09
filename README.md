@@ -42,3 +42,4 @@ or have a look at a small demonstration video: https://youtu.be/5Qu8TZNxHn0
 STATUS:
 This is not the publicly released version yet, it lacks documentation and I intend to deliver a new shell in the spirit of Midnight Commander.
 It's not finished also because I might abandon Turbo Modula-2 Reloaded in favor of Oberon-07 in the future, so that will allow me to furthermore reduce the size of the system. The rationale behind the abandon of TM2R is that I don't have the sources (only the part that I have decompiled, and the result is not always readable). Also my code generator for Oberon is very good now, and I'm aiming for the simplest system possible...
+However, I've fixed a few bugs discovered when playing Advent of Code 2021, so the big system.dsk image is not up-to-date with these last fixes, a new release will be commited when all the puzzles are done.
