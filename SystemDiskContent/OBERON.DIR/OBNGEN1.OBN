@@ -291,11 +291,10 @@ IMPORT OScanner, OSymTab, SYSTEM;
     dim  := x.type.len;        (* dimension *)
     IF (y.mode = OSymTab.Const) & (dim >= 0) THEN
       IF (y.a < 0) OR (y.a >= dim) THEN OScanner.Mark("bad index") END ;
-      IF x.mode IN {OSymTab.Var, OSymTab.Indirect}
-      THEN x.a := y.a * size  (* variable has been loaded by Index1, use x.a as index *)
-      ELSE x.a := x.a + y.a * size
+      IF x.mode = Indexed
+      THEN x.a := x.a + y.a * size
+      ELSE x.a := y.a * size; x.mode := Indexed
       END;
-      x.mode := Indexed
     ELSE (* index is not constant, we need the array address on stack now *)
       IF x.mode = Indexed THEN (* array is a record field *)
         IF x.a > 255
