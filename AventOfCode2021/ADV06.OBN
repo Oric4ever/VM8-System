@@ -7,6 +7,7 @@ VAR t: Texts.TEXT;
     fishes: ARRAY 9 OF BigInt;
     partA, partB: BigInt;
     numString: ARRAY 15 OF CHAR;
+    separator: CHAR;
 
 PROCEDURE NewDay;
 VAR i: INTEGER;
@@ -21,7 +22,7 @@ END NewDay;
 BEGIN
   ASSERT( Texts.OpenText(t, "input.06") );
   FOR i:=1 TO 300 DO
-    Texts.ReadInt(t, timer); ASSERT(Texts.Done(t));
+    Texts.ReadInt(t, timer); Texts.ReadChar(t, separator);
     BigNum.Inc(fishes[timer], 1);
   END;
 

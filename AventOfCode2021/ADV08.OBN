@@ -1,5 +1,6 @@
 MODULE Adv08;
 IMPORT Texts,Out;
+CONST N = 200;
 VAR t: Texts.TEXT;
     n, i, j, count: INTEGER;
     separator: ARRAY 2 OF CHAR;
@@ -68,11 +69,10 @@ END Solve;
 BEGIN
   ASSERT( Texts.OpenText(t, "input.08") );
   count := 0;
-  FOR n := 1 TO 200 DO
+  FOR n := 1 TO N DO
     FOR i := 0 TO 9 DO sets[i] := ReadSet() END;
     Texts.ReadString(t, separator);
     FOR i := 0 TO 3 DO display[i] := ReadSet() END;
-    Texts.ReadLn(t);
 
     Solve;
     FOR i := 0 TO 3 DO
@@ -87,7 +87,7 @@ BEGIN
   Out.Int(count, 5); Out.Ln;
 
   ASSERT( Texts.OpenText(t, "input.08") );
-  FOR n := 1 TO 200 DO
+  FOR n := 1 TO N DO
     FOR i := 0 TO 9 DO sets[i] := ReadSet() END;
     Texts.ReadString(t, separator);
     FOR i := 0 TO 3 DO display[i] := ReadSet() END;

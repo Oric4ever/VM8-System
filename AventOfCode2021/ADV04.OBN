@@ -1,17 +1,18 @@
 MODULE Adv04;
 IMPORT Texts, Out;
+CONST N = 100;
 TYPE Grid = ARRAY 5 OF ARRAY 5 OF INTEGER;
 
 VAR t: Texts.TEXT;
-    grids  : ARRAY 100 OF Grid;
-    numbers: ARRAY 100 OF INTEGER;
-    wonBoards : ARRAY 100 OF BOOLEAN;
+    grids  : ARRAY N OF Grid;
+    numbers: ARRAY N OF INTEGER;
+    wonBoards : ARRAY N OF BOOLEAN;
     i, n, wins, winner : INTEGER;
+    separator: CHAR;
 
 PROCEDURE ReadGrid(VAR grid: Grid);
 VAR i,j: INTEGER;
 BEGIN
-  Texts.ReadLn(t); Texts.ReadLn(t);
   FOR i := 0 TO 4 DO
     FOR j := 0 TO 4 DO
       Texts.ReadInt(t, grid[i][j]);
@@ -56,14 +57,17 @@ END Sum;
 
 BEGIN
   ASSERT( Texts.OpenText(t, "input.04") );
-  FOR i := 0 TO 99 DO Texts.ReadInt(t, numbers[i]); ASSERT( Texts.Done(t) ) END;
-  FOR n := 0 TO 99 DO ReadGrid(grids[n]) END;
+  FOR i := 0 TO LEN(numbers)-1 DO
+    Texts.ReadInt (t, numbers[i]); ASSERT( Texts.Done(t) );
+    Texts.ReadChar(t, separator)
+  END;
+  FOR n := 0 TO LEN(grids)-1 DO ReadGrid(grids[n]) END;
 
   i := -1;
   wins := 0;
   WHILE wins = 0 DO
     INC(i);
-    FOR n := 0 TO 99 DO
+    FOR n := 0 TO LEN(grids)-1 DO
       IF Mark(grids[n], numbers[i]) THEN INC(wins); winner := n END
     END;
   END;
@@ -75,7 +79,7 @@ BEGIN
 
   WHILE wins # 100 DO
     INC(i);
-    FOR n := 0 TO 99 DO
+    FOR n := 0 TO LEN(grids)-1 DO
       IF NOT wonBoards[n] THEN
         wonBoards[n] := Mark(grids[n], numbers[i]);
         IF wonBoards[n] THEN INC(wins); winner := n END

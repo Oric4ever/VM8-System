@@ -6,6 +6,7 @@ VAR t: Texts.TEXT;
     sum, best : LONGINT;
     x : ARRAY N OF INTEGER;
     costB: ARRAY 2000 OF LONGINT;
+    separator: CHAR;
 
 PROCEDURE CostA(target: INTEGER):LONGINT;
 VAR n: INTEGER;
@@ -37,7 +38,7 @@ END CostB;
 BEGIN
   ASSERT( Texts.OpenText(t, "input.07") );
   FOR n:=1 TO N DO
-    Texts.ReadInt(t, x[n-1]); ASSERT( Texts.Done(t) );
+    Texts.ReadInt(t, x[n-1]); Texts.ReadChar(t, separator);
     sum := sum + LONG(x[n-1])
   END;
   target := INT( (sum + LONG(500)) DIV LONG(1000) );
