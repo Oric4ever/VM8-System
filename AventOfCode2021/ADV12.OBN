@@ -1,0 +1,94 @@
+MODULE Adv12;
+IMPORT Texts, Out;
+CONST start=1; end=2; N = 16; NbLinks = 25;
+TYPE Name = ARRAY 2 OF CHAR;
+VAR t: Texts.TEXT;
+    names: ARRAY N OF Name;
+    nbNodes,i, nbPaths: INTEGER;
+    nbPaths2: LONGINT;
+    linked : ARRAY N OF SET;
+    smallCaves: SET;
+
+PROCEDURE SearchName(name: Name): INTEGER;
+VAR i, num: INTEGER;
+BEGIN
+  IF name = "start" THEN num := start
+  ELSIF name = "end" THEN num := end
+  ELSE
+    num := 0;
+    FOR i := 3 TO nbNodes DO
+      IF names[i] = name THEN num := i END
+    END;
+    IF num = 0 THEN INC(nbNodes); num := nbNodes; names[num] := name END
+  END;
+  RETURN num
+END SearchName;
+
+PROCEDURE ReadLink(t: Texts.TEXT);
+VAR node1, node2: INTEGER;
+    separator: CHAR;
+  PROCEDURE ReadNode(t: Texts.TEXT): INTEGER;
+  VAR name: Name;
+      dummy: CHAR;
+      node,i: INTEGER;
+  BEGIN
+    Texts.ReadChar(t, name[0]);
+    Texts.ReadChar(t, name[1]);
+    IF name = "st" THEN node := start; FOR i:=1 TO 3 DO Texts.ReadChar(t, dummy) END
+    ELSIF name = "en" THEN node := end; Texts.ReadChar(t, dummy)
+    ELSE node := SearchName(name)
+    END;
+    RETURN node
+  END ReadNode;
+BEGIN
+  node1 := ReadNode(t); Texts.ReadChar(t, separator);
+  node2 := ReadNode(t); Texts.ReadLn(t);
+  linked[node1] := linked[node1] + {node2};
+  linked[node2] := linked[node2] + {node1};
+END ReadLink;
+
+PROCEDURE SearchPaths(from: INTEGER; visited: SET);
+VAR next: INTEGER;
+BEGIN
+  IF from = end THEN INC(nbPaths)
+  ELSE
+    FOR next := 2 TO nbNodes DO
+      IF (next IN linked[from]) &
+        (NOT (next IN smallCaves) OR NOT (next IN visited)) THEN
+        SearchPaths(next, visited + { next })
+      END
+    END
+  END
+END SearchPaths;
+
+PROCEDURE SearchPath2(from: INTEGER; visited: SET; visitedTwice: INTEGER);
+VAR next: INTEGER;
+BEGIN
+  IF from = end THEN nbPaths2 := nbPaths2 + LONG(1)
+  ELSE
+    FOR next := 2 TO nbNodes DO
+      IF (next IN linked[from]) &
+        (NOT (next IN smallCaves) OR
+         NOT (next IN visited) OR (visitedTwice = 0)) THEN
+
+        IF (next IN smallCaves) & (next IN visited)
+        THEN SearchPath2(next, visited + {next}, next)
+        ELSE SearchPath2(next, visited + {next}, visitedTwice)
+        END
+      END
+    END
+  END
+END SearchPath2;
+
+BEGIN
+  names[start] := "st"; names[end] := "en"; nbNodes := 2;
+  ASSERT( Texts.OpenText(t, "input.12") );
+  FOR i:=1 TO NbLinks DO ReadLink(t) END;
+  FOR i:=1 TO nbNodes DO
+    IF names[i][0] # CAP(names[i][0]) THEN smallCaves := smallCaves + {i} END
+  END;
+  SearchPaths(start, {start});
+  Out.String("Part A:"); Out.Int(nbPaths, 5); Out.Ln;
+  SearchPath2(start, {start}, 0);
+  Out.String("Part B:"); Out.Long(nbPaths2, 7); Out.Ln;
+END Adv12.
