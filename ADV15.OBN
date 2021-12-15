@@ -1,0 +1,51 @@
+MODULE Adv15a;
+IMPORT Texts,Out,Elem,Buffer;
+CONST N=100;        (* argh, part B is sized 500x500, so some work is required for it *)
+VAR grid: ARRAY N,N OF CHAR;
+    cost: ARRAY N+2,N+2 OF INTEGER;
+    t   : Texts.TEXT;
+    i,j,n, currentCost : INTEGER;
+    pos : Elem.Type;
+
+PROCEDURE Min(a,b: INTEGER):INTEGER;
+BEGIN IF a > b THEN a := b END; RETURN a
+END Min;
+
+PROCEDURE fScore(pos: Elem.Type):INTEGER;
+BEGIN RETURN cost[pos.y][pos.x] + (N - pos.x) + (N - pos.y)
+END fScore;
+
+PROCEDURE test(x,y, currentCost: INTEGER);
+VAR pos: Elem.Type;
+    testScore: INTEGER;
+BEGIN
+  testScore := currentCost + ORD(grid[y-1][x-1]) - ORD('0');  (* grid is 0-based *)
+  IF testScore < cost[y][x] THEN
+    cost[y][x] := testScore;
+    pos.x := x; pos.y := y;
+    IF NOT Buffer.Contains(pos) THEN Buffer.Enqueue(pos) END;
+  END;
+END test;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.15") );
+  FOR n:=0 TO N-1 DO Texts.ReadString(t, grid[n]) END;
+  Texts.CloseText(t);
+  FOR j := 0 TO N+1 DO
+    FOR i := 0 TO N+1 DO cost[j][i] := 9999 END
+  END;
+
+  cost[1][1] := 0;
+  pos.x := 1; pos.y := 1; Buffer.Enqueue(pos);
+  REPEAT
+    Buffer.ExtractMin(fScore, pos);
+    IF (pos.x # N) OR (pos.y # N) THEN
+      currentCost := cost[pos.y][pos.x];
+      IF pos.x # N THEN test(pos.x + 1, pos.y, currentCost) END;
+      IF pos.x # 1 THEN test(pos.x - 1, pos.y, currentCost) END;
+      IF pos.y # N THEN test(pos.x, pos.y + 1, currentCost) END;
+      IF pos.y # 1 THEN test(pos.x, pos.y - 1, currentCost) END;
+    END;
+  UNTIL (pos.x = N) & (pos.y = N);
+  Out.Int(cost[N][N], 5); Out.Ln;
+END Adv15a.
