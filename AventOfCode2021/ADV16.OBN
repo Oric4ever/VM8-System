@@ -1,0 +1,87 @@
+MODULE Adv16;
+IMPORT BigNum,Texts, Out;
+CONST Size = 1305;
+TYPE BigInt = BigNum.INT64;
+VAR t: Texts.TEXT;
+    hex: ARRAY Size OF CHAR;
+    bin: ARRAY Size*4 OF BYTE;
+    index, sumVersions: INTEGER;
+    partB: BigInt;
+    display: ARRAY 18 OF CHAR;
+
+PROCEDURE NextBits(nbBits:INTEGER):INTEGER;
+VAR val, n: INTEGER;
+BEGIN
+  val := 0;
+  FOR n:=1 TO nbBits DO
+    val := val * 2 + bin[index];
+    INC(index)
+  END;
+  RETURN val
+END NextBits;
+
+PROCEDURE ConvertToBin(hex: ARRAY OF CHAR; VAR bin: ARRAY OF BYTE);
+VAR i, bit, val: INTEGER;
+BEGIN
+  i := 0;
+  WHILE hex[i] # 0X DO
+    val := ORD(hex[i]) - ORD('0');
+    IF val > 9 THEN val := ORD(hex[i]) - ORD('A') + 10 END;
+    FOR bit := 0 TO 3 DO bin[i*4+3-bit] := val MOD 2; val := val DIV 2 END;
+    INC(i)
+  END
+END ConvertToBin;
+
+PROCEDURE PacketValue(VAR result: BigInt);
+VAR version, id, length, i, nextIndex : INTEGER;
+    value, value2: BigInt;
+    lastGroup : BOOLEAN;
+  PROCEDURE Op(op: INTEGER; VAR res: BigInt; b: BigInt);
+  VAR a, tmp: BigInt;
+  BEGIN
+    a := res;
+    CASE op OF
+    | 0: BigNum.Add(a,b,res)
+    | 1: BigNum.Mul(a,b,tmp,res)
+    | 2: IF BigNum.Before(b,a) THEN res:=b END
+    | 3: IF BigNum.Before(a,b) THEN res:=b END
+    | 5: BigNum.FromInt( ORD(BigNum.Before(b,a)), res)
+    | 6: BigNum.FromInt( ORD(BigNum.Before(a,b)), res)
+    | 7: BigNum.FromInt( ORD(BigNum.Equal(a,b)), res)
+    END
+  END Op;
+BEGIN
+  version := NextBits(3); sumVersions := sumVersions + version;
+  id      := NextBits(3);
+  IF id = 4 THEN (* literal value packet *)
+    BigNum.FromInt(0, value);
+    REPEAT
+      lastGroup := NextBits(1) = 0;
+      BigNum.MulBy(value, 16, value);
+      BigNum.FromInt(NextBits(4), value2);
+      BigNum.Add(value, value2, value);
+    UNTIL lastGroup;
+  ELSE (* operator packet with sub-packets *)
+    IF NextBits(1) = 0 THEN (* length in bits *)
+      length    := NextBits(15);
+      nextIndex := index + length;
+      PacketValue(value);
+      WHILE index < nextIndex DO PacketValue(value2); Op(id, value, value2) END
+    ELSE (* length in nb of subpackets *)
+      length := NextBits(11);
+      PacketValue(value);
+      FOR i := 2 TO length DO PacketValue(value2); Op(id, value, value2) END
+    END;
+  END;
+  result := value
+END PacketValue;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.16") );
+  Texts.ReadString(t, hex);
+  ConvertToBin(hex, bin);
+  PacketValue(partB);
+  Out.String("Part A: "); Out.Int(sumVersions, 5); Out.Ln;
+  BigNum.ToString(partB, display);
+  Out.String("Part B: "); Out.String(display); Out.Ln;
+END Adv16.
