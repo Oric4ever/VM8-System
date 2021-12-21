@@ -1,0 +1,29 @@
+MODULE Adv21;
+IMPORT Out;
+CONST N=100; Start1=1; Start2=3;
+VAR n,move,turn,dice,rolls:INTEGER;
+    scores, pos: ARRAY 2 OF INTEGER;
+
+PROCEDURE Roll():INTEGER;
+BEGIN
+  INC(rolls);
+  IF dice = 100 THEN dice := 0 END;
+  INC(dice);
+  RETURN dice
+END Roll;
+
+BEGIN
+  pos[0] := Start1-1; pos[1] := Start2-1;
+
+  turn := 1;
+  REPEAT
+    turn := 1 - turn;
+    move := Roll()+Roll()+Roll();
+    (* pos in range 0..9 *)
+    pos[turn] := (pos[turn] + move) MOD 10;
+    scores[turn] := scores[turn] + (pos[turn] + 1);
+    Out.Int(turn+1,1); Out.Int(move,4);
+    Out.Int(pos[turn]+1,3); Out.Int(scores[turn],5); Out.Ln;
+  UNTIL scores[turn] >= 1000;
+  Out.Long(LONG(scores[1-turn])*LONG(rolls), 9); Out.Ln;
+END Adv21.
