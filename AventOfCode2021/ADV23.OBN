@@ -1,0 +1,182 @@
+MODULE Adv23;
+IMPORT Out;
+(* TODO: implement BFS instead of DFS to speed it up *)
+VAR rooms: ARRAY 10,4 OF INTEGER; (* rooms numbered 3 to 9 *)
+    heights,nbGoods,costs: ARRAY 10 OF INTEGER; (* rooms numbered 3 TO 9 *)
+    hallway: ARRAY 13 OF INTEGER;
+    minCost: LONGINT;
+
+(* Area re-arranged this way
+   ###############
+   #0.2.4.6.8.A.C#
+   ####3#5#7#9####
+      #3#5#7#9#
+      #3#5#7#9#
+      #3#5#7#9#
+      #########
+*)
+
+PROCEDURE Print;
+VAR i,j: INTEGER;
+BEGIN
+  FOR i:=0 TO 12 DO
+    IF hallway[i] # 0 THEN Out.Int(hallway[i],1) ELSE Out.Char('.') END
+  END;
+  Out.Ln;
+  FOR j:=3 TO 0 BY -1 DO
+    Out.String('###');
+    FOR i:=3 TO 9 BY 2 DO
+      IF heights[i]-1 >= j THEN Out.Int(rooms[i][j],1) ELSE Out.Char('.') END;
+      Out.Char('#');
+    END; Out.String('##'); Out.Ln
+  END;
+  Out.String("#############"); Out.Ln;
+  Out.String('  ');
+  FOR i:=3 TO 9 BY 2 DO Out.Int(nbGoods[i],2) END; Out.Ln;
+  Out.Ln;
+END Print;
+
+PROCEDURE HallwayToRoomOk(pos, dest: INTEGER): BOOLEAN;
+VAR valid: BOOLEAN;
+    step : INTEGER;
+BEGIN
+  valid := nbGoods[dest] = heights[dest];
+  IF pos < dest THEN step := +1 ELSE step := -1 END;
+  WHILE valid & (pos # dest) DO pos := pos + step; valid := hallway[pos] = 0 END;
+  RETURN valid
+END HallwayToRoomOk;
+
+PROCEDURE RoomToHallwayOk(pos, dest: INTEGER): BOOLEAN;
+VAR valid: BOOLEAN;
+    step : INTEGER;
+BEGIN
+  valid := hallway[dest] = 0;
+  IF pos < dest THEN step := +1 ELSE step := -1 END;
+  WHILE valid & (pos # dest) DO pos := pos + step; valid := hallway[pos] = 0 END;
+  RETURN valid
+END RoomToHallwayOk;
+
+PROCEDURE RoomToRoomOk(from: INTEGER; VAR dest: INTEGER): BOOLEAN;
+VAR valid: BOOLEAN;
+    step : INTEGER;
+BEGIN
+  dest  := rooms[from][heights[from]-1];
+  valid := (dest # from) & (nbGoods[dest] = heights[dest]);
+  IF from < dest THEN step := 1 ELSE step := -1 END;
+  WHILE valid & (from # dest) DO from := from + step; valid := hallway[from] = 0 END;
+  RETURN valid
+END RoomToRoomOk;
+
+PROCEDURE MoveFromHallToRoom(hallPos, roomNum: INTEGER): INTEGER;
+VAR cost, height: INTEGER;
+BEGIN
+  height := heights[roomNum];
+  cost := (ABS(hallPos - roomNum) + 4 - height) * costs[roomNum];
+  IF (hallPos = 0) OR (hallPos = 12) THEN cost := cost - costs[roomNum] END;
+  hallway[hallPos] := 0;
+  rooms[roomNum][height] := roomNum; INC(height);
+  heights[roomNum] := height;
+  nbGoods[roomNum] := height;
+  RETURN cost
+END MoveFromHallToRoom;
+
+PROCEDURE BacktrackToHall(roomNum, hallPos: INTEGER);
+BEGIN
+  DEC(heights[roomNum]); DEC(nbGoods[roomNum]);
+  hallway[hallPos] := roomNum;
+END BacktrackToHall;
+
+PROCEDURE MoveFromRoomToHall(roomNum, hallPos: INTEGER): INTEGER;
+VAR cost, height, amphipod: INTEGER;
+BEGIN
+  height := heights[roomNum]; DEC(height); heights[roomNum] := height;
+  amphipod := rooms[roomNum][height];
+  hallway[hallPos] := amphipod;
+  cost := (ABS(hallPos - roomNum) + 4 - height) * costs[amphipod];
+  IF (hallPos = 0) OR (hallPos = 12) THEN cost := cost - costs[amphipod] END;
+  RETURN cost
+END MoveFromRoomToHall;
+
+PROCEDURE BacktrackFromHall(hallPos, roomNum: INTEGER);
+BEGIN
+  rooms[roomNum][heights[roomNum]] := hallway[hallPos];
+  INC(heights[roomNum]);
+  hallway[hallPos] := 0
+END BacktrackFromHall;
+
+PROCEDURE MoveFromRoomToRoom(src, dest: INTEGER): INTEGER;
+VAR cost, heightSrc, heightDst: INTEGER;
+BEGIN
+  heightSrc := heights[src]; DEC(heightSrc); heights[src] := heightSrc;
+  heightDst := heights[dest];
+  cost := (ABS(dest-src) + (4 - heightSrc) + (4 - heightDst)) * costs[dest];
+  rooms[dest][heightDst] := dest; INC(heightDst);
+  heights[dest] := heightDst; nbGoods[dest] := heightDst;
+  RETURN cost
+END MoveFromRoomToRoom;
+
+PROCEDURE BacktrackRoomMove(current, back: INTEGER);
+VAR height: INTEGER;
+BEGIN
+  DEC(heights[current]); DEC(nbGoods[current]);
+  height := heights[back];
+  rooms[back][height] := current;
+  heights[back] := height + 1;
+END BacktrackRoomMove;
+
+PROCEDURE Search(cost: LONGINT);
+VAR src, dest, pos, moveCost: INTEGER;
+BEGIN
+  IF nbGoods[3]+nbGoods[5]+nbGoods[7]+nbGoods[9] = 16 THEN
+    IF cost < minCost THEN minCost := cost; Out.Long(cost, 6); Out.Ln END
+  ELSE
+
+    (* try going directly from room to room first *)
+    FOR src:=3 TO 9 BY 2 DO
+      IF (heights[src] # 0) & RoomToRoomOk(src,dest) THEN
+        moveCost := MoveFromRoomToRoom(src, dest);
+        Search(cost + LONG(moveCost));
+        BacktrackRoomMove(dest, src);
+      END
+    END;
+
+    (* then try to enter rooms from hallway *)
+    FOR pos:=0 TO LEN(hallway)-1 BY 2 DO
+      dest := hallway[pos];
+      IF (dest # 0) & HallwayToRoomOk(pos, dest) THEN
+        moveCost := MoveFromHallToRoom(pos, dest);
+        Search(cost + LONG(moveCost));
+        BacktrackToHall(dest, pos);
+      END
+    END;
+
+    (* then try to exit rooms *)
+    FOR src := 3 TO 9 BY 2 DO
+      IF (heights[src] # 0) & (heights[src] # nbGoods[src]) & NOT RoomToRoomOk(src,dest)
+      THEN
+        FOR pos := 0 TO LEN(hallway)-1 BY 2 DO
+          IF RoomToHallwayOk(src, pos) THEN
+            moveCost := MoveFromRoomToHall(src, pos);
+            Search(cost + LONG(moveCost));
+            BacktrackFromHall(pos, src);
+          END
+        END
+      END
+    END
+
+  END
+END Search;
+
+BEGIN
+  rooms[3][3] := 3; rooms[5][3] := 7; rooms[7][3] := 5; rooms[9][3] := 5;
+  rooms[3][2] := 9; rooms[5][2] := 7; rooms[7][2] := 5; rooms[9][2] := 3;
+  rooms[3][1] := 9; rooms[5][1] := 5; rooms[7][1] := 3; rooms[9][1] := 7;
+  rooms[3][0] := 9; rooms[5][0] := 9; rooms[7][0] := 3; rooms[9][0] := 7;
+
+  nbGoods[3]  := 0; nbGoods[5]  := 0; nbGoods[7]  := 0; nbGoods[9]  := 0;
+  heights[3]  := 4; heights[5]  := 4; heights[7]  := 4; heights[9]  := 4;
+
+  costs[3]  := 1;   costs[5]  := 10;  costs[7]  := 100; costs[9] := 1000;
+
+  minCost := LONG(7FFFH,0FFFFH); Search(LONG(0))
+END Adv23.
