@@ -27,7 +27,7 @@ int key_available(void)
 
 word bios(word fct, word param)
 {
-    char c;
+    unsigned char c;
     word offset, count;
     if (fct > 5) fprintf(tracelog,"BIOS fct %d !!\n",fct);
     switch (fct) {

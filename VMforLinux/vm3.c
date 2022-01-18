@@ -12,10 +12,11 @@
 #include "mcode.h"
 
 #define BDOS_MCD 0
-#define PAGE0_CHECK 0
+#define PAGE0_CHECK 1
+#define PAGE3_CHECK 1
 #define FFF 1
 #define FFF2 1
-#define MIN_ALLOC_SIZE 4
+#define MIN_ALLOC_SIZE 8
 
 enum continuation {
     TRANSFER_TO_NEW_PROCESS = 0x0a75,
@@ -31,6 +32,7 @@ enum continuation {
 };
 
 FILE *tracelog;
+bool trace;
 void error(int n, word hl, word bc);
 bool mcode_interp(void);
 void save_context(word coroutine_var, enum continuation retaddr);
@@ -49,12 +51,20 @@ byte mem[65536+65536]; // additionnal space due to bug in EDIT2
 byte *MEM(int addr)  {
 #if PAGE0_CHECK
     if (addr>=0x000 && addr<0x0100) fprintf(tracelog,"PAGE0: Warning: access to byte at address %04x\n", addr);
+#else
+#if PAGE3_CHECK
+    if (addr>=0x300 && addr<0x0400) fprintf(tracelog,"PAGE3: Warning: access to byte at address %04x\n", addr);
+#endif
 #endif
     return &mem[addr];
 }
 word *WMEM(int addr) {
 #if PAGE0_CHECK
     if (addr>=0x000 && addr<0x0100) fprintf(tracelog,"PAGE0: Warning: access to word at address %04x\n", addr);
+#else
+#if PAGE3_CHECK
+    if (addr>=0x300 && addr<0x0400) fprintf(tracelog,"PAGE3: Warning: access to word at address %04x\n", addr);
+#endif
 #endif
     return (word *)(&mem[addr]);
 }
@@ -71,6 +81,17 @@ qword *QMEM(int addr) {
     return (qword *)(&mem[addr]);
 }
 
+/* let's have GLOBAL address in a VM's register instead of in memory */
+#undef GLOBAL_PTR
+word GLOBAL_PTR;
+
+/* same with STACK_LIMIT (= HEAP - 60) */
+#undef STACK_LIMIT
+word STACK_LIMIT;
+
+/* move FREE_LIST variable */
+#undef FREE_LIST
+#define FREE_LIST 0x0104
 
 #define BC OUTER_FRAME
 word OUTER_FRAME, IP, IntFlag, HL, A, carry;
@@ -140,7 +161,7 @@ void load_overlay(word module) // routine 0baf
         word destination = WMEM(module)[-3]; // load address
         if (TRACE_ALL) fprintf(tracelog,"Length: %d, Address: %04x\n",length,destination);
         // now search which module is currently loaded at this overlay address
-        for (word mod1 = *WMEM(0x030C); mod1; mod1 = WMEM(mod1)[32])
+        for (word mod1 = *(word *)(mem + 0x030C); mod1; mod1 = WMEM(mod1)[32])
             if (WMEM(mod1+80)[-3] == destination) {
                 WMEM(mod1+80)[0] |= TRANSIENT; // mark the module absent
                 if (TRACE_ALL) fprintf(tracelog,"Unload module %.8s\n",MEM(mod1+80-14));
@@ -1010,9 +1031,9 @@ void enter(int n)
     push(OUTER_FRAME);
     LOCAL_PTR = STACK_PTR;
     push(IP);   // routine's start address
-    if (STACK_PTR - size < *WMEM(0x0316)) stack_overflow();
+    if (STACK_PTR - size < STACK_LIMIT) stack_overflow();
     STACK_PTR -= size;
-    if (size>=2) STACK[0] = 0;  // just for easier comparison
+    push(0);  // just for easier comparison
 }
 
 void save_context(word coroutine_var, enum continuation retaddr)
@@ -1221,6 +1242,7 @@ void raise_to_kernel() {
     printf("%.*s", exception_name_size, MEM(exception_name+1));
 
     printf(" in module %.8s\n", MEM(save_global)-14);
+    printf("Parameters: %d, %d, %d\n", TOP, BC, HL);
     if (msg_addr) printf("%*s\n", msg_size, MEM(msg_addr));
     printf("Aborting...\n");
     exit(1);
@@ -1390,10 +1412,11 @@ bool mcode_interp(void)
 
   if (TRACE_ALL) {
     if (enter_proc) localstack[++nbframes]=STACK_PTR;
-    fprintf(tracelog,"\n\tLOCAL=%04X GLOBAL=%04X HEAP=%04X LIMIT=%04X STACK=%04X",
-         LOCAL_PTR, GLOBAL_PTR, STACK_LIMIT-60, STACK_LIMIT, STACK_PTR);
-    fprintf(tracelog," [3813]=%04x",*WMEM(0x3813));
-    fprintf(tracelog," [FD28]=%04x",*WMEM(0xFD28));
+//    fprintf(tracelog,"\n\tLOCAL=%04X GLOBAL=%04X STACK=%04X",
+//         LOCAL_PTR, GLOBAL_PTR, STACK_PTR);
+//    fprintf(tracelog,"\n\tLOCAL=%04X GLOBAL=%04X HEAP=%04X LIMIT=%04X STACK=%04X",
+//         LOCAL_PTR, GLOBAL_PTR, STACK_LIMIT-60, STACK_LIMIT, STACK_PTR);
+//    fprintf(tracelog," [FF6D]=%04x",*WMEM(0xFF6D));
 //    if (STACK_PTR==localstack[nbframes]) fprintf(tracelog,"  EMPTY\n");
 //    else
         fprintf(tracelog," TOP=%04X \n",TOP);
@@ -1727,8 +1750,9 @@ struct {
 void warm_boot(void)
 {
     *WMEM(0xFF0C) = 0x041A; // let the Kernel know the VM fetch routine address
+    STACK_LIMIT = *(word *)(mem + 0x0316);
     STACK_PTR  = high_mem;
-    word module = *WMEM(0x030C); // first module to init
+    word module = *(word *)(mem + 0x030C); // first module to init
     while (module != 0) {
         GLOBAL_PTR = module + 80;
         if (GLOBAL[0] & 4) { // INIT flag

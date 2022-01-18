@@ -7,7 +7,7 @@
 #define dword int32_t
 #define qword double
 
-extern word BC, IP, LOCAL_PTR, STACK_PTR;
+extern word BC, IP, FRAME_PTR, STACK_PTR;
 extern byte bdos(word fct, word param);
 extern word bios(word fct, word param);
 extern void init_bios(char *);
