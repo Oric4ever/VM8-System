@@ -1,0 +1,14 @@
+MODULE Adv01a;
+IMPORT In, Out, ComLine;
+VAR last, depth, count: INTEGER;
+  i: INTEGER;
+BEGIN
+  ComLine.RedirectInput;
+  In.Int(last); In.Int(depth);
+  WHILE In.Done DO
+    IF depth > last THEN INC(count) END;
+    last := depth;
+    In.Int(depth)
+  END;
+  Out.Int(count,5)
+END Adv01a.

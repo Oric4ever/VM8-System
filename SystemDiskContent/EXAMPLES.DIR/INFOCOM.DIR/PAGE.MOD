@@ -1,0 +1,125 @@
+IMPLEMENTATION MODULE Paging; (* UNUSED FOR NOW *)
+
+
+CONST NBPAGES = 16;
+TYPE NumPage = [0..NBPAGES]; (* 0 means page not found *)
+
+VAR basePtr : ADDRESS;
+    pages   : ARRAY [0..NBPAGES] OF Block;
+    numBlock: ARRAY [0..NBPAGES] OF CARDINAL;
+    mruPage : ARRAY [0..NBPAGES-1] OF NumPages;
+
+VAR pcOffset, pcBlock, pcPage: CARDINAL;
+    progBlockPtr     : POINTER TO Block;
+
+PROCEDURE FixPC;
+VAR pc: LONGINT;
+    newBlock : CARDINAL;
+BEGIN
+  pc       := LONG(pcBlock) * BLOCKSIZE + LONG(INTEGER(pcOffset));
+  pcOffset := CARD(pc MOD LONG(BLOCKSIZE));
+  newBlock := CARD(pc DIV LONG(BLOCKSIZE));
+  IF newBlock # pcBlock THEN
+    pcBlock := newBlock;
+    IF pcBlock < residentBlocks
+    THEN progBlockPtr := GameFile.basePtr + pcBlock * BLOCKSIZE
+    ELSE progBlockPtr := Page.FetchPage(pcBlock)
+    END;
+  END;
+END FixPC;
+
+PROCEDURE NextByte(): CARDINAL;
+VAR byte: CARDINAL;
+BEGIN
+  byte := ORD(progBlockPtr^[pcOffset]);
+  INC(pcOffset); IF pcOffset = BLOCKSIZE THEN FixPC END;
+  RETURN byte
+END NextByte;
+
+PROCEDURE NextWord(): CARDINAL;
+BEGIN
+  RETURN NextByte() * 256 + NextByte()
+END NextWord;
+
+PROCEDURE Gosub(nbParams: CARDINAL; VAR params: ARRAY OF WORD);
+VAR destination, nbLocalVars: CARDINAL;
+BEGIN
+  destination := CARDINAL(params[0]);
+  IF destination = 0 THEN Store(destination)
+  ELSE
+    Stack.Push(pcPage);
+    Stack.Push(pcOffset);
+    pcPage   := destination DIV 256; (* word address *)
+    pcOffset := destination MOD 256 * 2;
+    FixPC;
+
+    nbLocalVars := NextByte();
+    Stack.BuildFrame(nbLocalVars);
+    FOR i:=1 TO nbParams-1 DO (* skip first param which is destination *)
+      Stack.SetLocal(i, params[i]);
+      dummy := NextWord();  (* ignore procedure's default value *)
+    END;
+    FOR i:=nbParams TO nbLocalVars DO (* initialise with procedure's default value      Stack.SetLocal(i, NextWord())
+    END;
+  END;
+END Gosub;
+
+PROCEDURE Rtn  (val: WORD);
+BEGIN
+  Stack.DeleteFrame;
+  Stack.Pull(pcOffset);
+  Stack.Pull(pcPage);
+  FixPC;
+  Store(val);
+END Rtn;
+
+PROCEDURE Jump (offset: CARDINAL);
+BEGIN
+  INC(pcOffset, offset-2);
+  FixPC;
+END Jump;
+
+PROCEDURE Rts;
+BEGIN
+  Rtn( Stack.Pull() )
+END Rts;
+
+PROCEDURE FindBlock(block: CARDINAL): CARDINAL;
+BEGIN
+  FOR i:=1 TO NBPAGES DO
+    IF numBlock[i] = block THEN RETURN i END
+  END;
+  RETURN 0
+END FindBlock;
+
+PROCEDURE FetchPage(block: CARDINAL): ADDRESS;
+VAR i: CARDINAL;
+BEGIN
+  (* optimization step: don't change the MRU table if it's already in the top 4 *)
+  FOR i := 0 TO 3 DO
+    IF numBlock[mruPage[i]] = block THEN RETURN ADR(pages[mruPage[i]]) END;
+  END;
+  i := FindBlock(block);
+  IF i = 0 THEN (* not found *)
+
+  ELSE
+  END;
+END FetchPage;
+
+PROCEDURE GetByte(VAR page, offset: CARDINAL): CARDINAL;
+VAR ptr: ADDRESS;
+BEGIN
+  IF page < residentBlocks
+  THEN ptr := basePtr + page * BLOCKSIZE + offset
+  ELSE ptr := FetchPage(page) + offset
+  END;
+  INC(offset); IF offset = BLOCKSIZE THEN offset := 0; INC(page) END;
+  RETURN CARDINAL(ptr^) MOD 256
+END GetByte;
+
+PROCEDURE GetWord(VAR page, offset: CARDINAL): CARDINAL;
+BEGIN
+  RETURN GetByte(page,offset) * 256 + GetByte(page,offset)
+END GetWord;
+
+END Page.

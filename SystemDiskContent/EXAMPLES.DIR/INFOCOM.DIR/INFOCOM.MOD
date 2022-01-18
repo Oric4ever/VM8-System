@@ -1,0 +1,39 @@
+IMPLEMENTATION MODULE Infocom;
+FROM ComLine IMPORT PromptFor;
+FROM GameFile IMPORT OpenFile, gameFlags, gameState;
+
+VAR gameName: ARRAY [0..15] OF CHAR;
+BEGIN
+  PromptFor("Game file: ", gameName);
+  IF NOT OpenFile(gameName) THEN WRITELN(gameName, ' not found'); HALT END;
+
+  gameFlags := {PAGED, PRTSTATUS};
+  gameState := NOTINIT;
+  Init;
+  IF Play() THEN
+    CheckVersion;
+    ScrBegin;
+    gameState := INITGAME;
+    IF snm # NIL THEN
+      sname := snm;
+      Restore;
+      gameState := PLAYGAME;
+    ELSE
+      ChangeStatus
+    END;
+
+(*
+    IF tandy  THEN INCL(gameFlags, TANDY) END;
+    IF prompt THEN INCL(gameFlags, ALTPROMPT) END;
+*)
+    Interp;
+    ScrEnd;
+  ELSE
+    IF snm # NIL THEN sname := snm; Restore END;
+    prtBufPtr^.max := Terminal.numCols - 1;
+    Options(verfy, head, objs, vocab1, tree);
+  END;
+
+  ScrShutdown;
+END Infocom.
+

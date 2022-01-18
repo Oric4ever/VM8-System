@@ -48,7 +48,7 @@ IMPLEMENTATION MODULE Files;
      char := f^.entry.desc.nameAndType.fullName[i];
      IF char <> ' ' THEN filename[n] := char; INC(n) END;
      INC(i);
-   UNTIL i > 11;
+   UNTIL i = 11;
    name := filename;
  END GetName;
 
@@ -198,6 +198,7 @@ IMPLEMENTATION MODULE Files;
  VAR file : FILE;
  BEGIN
    file := ADR(fd);
+   Build83Name(name,ext,FALSE,file^.entry.desc.nameAndType);
    RETURN FindFile(file)
  END fdOpen;
 

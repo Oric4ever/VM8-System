@@ -1,0 +1,27 @@
+MODULE TestTree;
+
+IMPORT Out, Container, BTree;
+
+TYPE IntBox = RECORD(Container.Box)
+                value: INTEGER
+              END;
+     MyItem = POINTER TO IntBox;
+
+VAR tree: BTree.Type;
+    item: MyItem;
+    i   : INTEGER;
+
+PROCEDURE Compare(item1, item2: Container.Item): INTEGER;
+BEGIN RETURN item(MyItem).value - item2(MyItem).value
+END Compare;
+
+BEGIN
+  NEW(item); item.value := 3; BTree.Insert(tree, item, Compare);
+  NEW(item); item.value := 1; BTree.Insert(tree, item, Compare);
+  NEW(item); item.value := 5; BTree.Insert(tree, item, Compare);
+  NEW(item); item.value := 4; BTree.Insert(tree, item, Compare);
+
+  Out.String("Searching...");
+  IF BTree.Contains(tree, item, Compare) THEN Out.String("OK") ELSE Out.String("KO") END;
+  Out.Ln
+END TestTree.

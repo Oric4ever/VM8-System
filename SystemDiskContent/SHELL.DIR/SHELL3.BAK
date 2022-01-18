@@ -143,9 +143,6 @@ BEGIN
   index := 0;
   Texts.ReadString(global2, local2);
   MOVE(ADR(commandLine[index]), ADR(commandLine[0]), 127-index);
-  Terminal.WriteChar('['); 
-  Terminal.WriteString(commandLine); 
-  Terminal.WriteChar(']');
   i := 0;
   WHILE (i < 126) AND (commandLine[i] <> 0C) DO INC(i) END;
   buffer[0] := CHR(i);

@@ -1,0 +1,28 @@
+MODULE ComLine;
+IMPORT FATDIR,Texts;
+
+VAR commandLine*    : Texts.TEXT;
+    inName*,outName*: ARRAY 20 OF CHAR;
+    progName*       : ARRAY 8 OF CHAR;
+    execute*        : INTEGER;
+    codepos*        : INTEGER;
+    commandBuffer*  : ARRAY 80 OF CHAR;
+    cmdlineLength*  : INTEGER;
+    tabNames*       : ARRAY 4,17 OF CHAR;
+    tabDirs*        : ARRAY 4 OF FATDIR.Directory;
+    currentTab*     : INTEGER;
+
+PROCEDURE RedirectInput*;
+BEGIN END RedirectInput;
+
+PROCEDURE RedirectOutput*;
+BEGIN END RedirectOutput;
+
+PROCEDURE PromptFor*(prompt: ARRAY OF CHAR; VAR s: ARRAY OF CHAR);
+BEGIN END PromptFor;
+
+PROCEDURE Chain*(prog,args,in,out: ARRAY OF CHAR);
+BEGIN END Chain;
+
+END ComLine.
+

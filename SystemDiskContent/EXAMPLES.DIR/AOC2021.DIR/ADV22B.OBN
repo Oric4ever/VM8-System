@@ -1,0 +1,113 @@
+MODULE Adv22b;
+IMPORT Texts, BigNum, Out;
+CONST N = 420; MaxCuboids = 1600;
+TYPE BigInt = BigNum.INT64;
+     List   = POINTER TO Cuboid;
+     Cuboid = RECORD
+                x1,x2,y1,y2,z1,z2: LONGINT;
+                on: BOOLEAN;
+               END;
+VAR t: Texts.TEXT;
+    cuboid, inter: Cuboid;
+    cuboids: ARRAY MaxCuboids OF Cuboid;
+    nbCuboids, lastCuboid: INTEGER;
+    volume, total: BigInt;
+    i,j: INTEGER;
+
+(*  example on 1D intervals :
+         +++++                +  5
+                  ++++++      +  6
+           ---    --          -  5
+           +++++++++          +  9
+         ----                 -  4
+           ++                 +  2
+           --                 -  2
+      +++++++                 +  7
+
+*)
+
+PROCEDURE StoreCuboid(c: Cuboid);
+BEGIN
+  cuboids[nbCuboids] := c; INC(nbCuboids);
+  ASSERT(nbCuboids < MaxCuboids);
+END StoreCuboid;
+
+PROCEDURE Volume(cuboid: Cuboid; VAR volume: BigInt);
+VAR length, width, height, tmp, surface: BigInt;
+BEGIN
+  BigNum.FromLong(cuboid.x2-cuboid.x1+LONG(1), length);
+  BigNum.FromLong(cuboid.y2-cuboid.y1+LONG(1), width);
+  BigNum.FromLong(cuboid.z2-cuboid.z1+LONG(1), height);
+  BigNum.Mul(length, width, tmp, surface);
+  BigNum.Mul(surface, height, tmp, volume);
+END Volume;
+
+PROCEDURE Intersect(c1,c2: Cuboid; VAR c: Cuboid): BOOLEAN;
+BEGIN
+  IF c1.x1 > c2.x1 THEN c.x1 := c1.x1 ELSE c.x1 := c2.x1 END;
+  IF c1.x2 < c2.x2 THEN c.x2 := c1.x2 ELSE c.x2 := c2.x2 END;
+  IF c1.y1 > c2.y1 THEN c.y1 := c1.y1 ELSE c.y1 := c2.y1 END;
+  IF c1.y2 < c2.y2 THEN c.y2 := c1.y2 ELSE c.y2 := c2.y2 END;
+  IF c1.z1 > c2.z1 THEN c.z1 := c1.z1 ELSE c.z1 := c2.z1 END;
+  IF c1.z2 < c2.z2 THEN c.z2 := c1.z2 ELSE c.z2 := c2.z2 END;
+  RETURN (c.x1 <= c.x2) & (c.y1 < c.y2) & (c.z1 < c.z2)
+END Intersect;
+
+PROCEDURE ReadInterval(VAR low,hi: LONGINT);
+VAR c: CHAR;
+BEGIN
+  Texts.ReadChar(t, c);
+  Texts.ReadChar(t, c);
+  Texts.ReadChar(t, c); ASSERT( c = '=' );
+  Texts.ReadLong(t, low);
+  Texts.ReadChar(t, c);
+  Texts.ReadChar(t, c);
+  Texts.ReadLong(t, hi);
+END ReadInterval;
+
+PROCEDURE ReadCuboid(VAR cuboid: Cuboid);
+VAR str: ARRAY 4 OF CHAR;
+    c: CHAR;
+BEGIN
+  Texts.ReadString(t, str); Texts.ReadAgain(t);
+  cuboid.on := str = "on";
+  ReadInterval(cuboid.x1, cuboid.x2);
+  ReadInterval(cuboid.y1, cuboid.y2);
+  ReadInterval(cuboid.z1, cuboid.z2);
+END ReadCuboid;
+
+PROCEDURE In(x,y,z: INTEGER; cuboid: Cuboid): BOOLEAN;
+BEGIN
+  RETURN (LONG(x) >= cuboid.x1) & (LONG(x) <= cuboid.x2)
+       & (LONG(y) >= cuboid.y1) & (LONG(y) <= cuboid.y2)
+       & (LONG(z) >= cuboid.z1) & (LONG(z) <= cuboid.z2)
+END In;
+
+PROCEDURE IsInside(c1,c2: Cuboid): BOOLEAN;
+BEGIN
+  RETURN (c1.x1 >= c2.x1) & (c1.x2 <= c2.x2)
+       & (c1.y1 >= c2.y1) & (c1.y2 <= c2.y2)
+       & (c1.z1 >= c2.z1) & (c1.z2 <= c2.z2)
+END IsInside;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.22") );
+  FOR i:=0 TO N-1 DO
+    ReadCuboid(cuboid);
+    Out.Int(i,3);
+    lastCuboid := nbCuboids-1;
+    IF cuboid.on THEN
+      FOR j:=0 TO lastCuboid DO
+        IF cuboids[j].on & Intersect(cuboid, cuboids[j], inter) THEN
+          inter.on := FALSE; StoreCuboid(inter)
+        END;
+      END;
+    END;
+    StoreCuboid(cuboid);
+    Out.Ln
+  END;
+  Out.Int(nbCuboids, 5)
+(*
+  Out.Long(Count(), 8); Out.Ln;
+*)
+END Adv22b.

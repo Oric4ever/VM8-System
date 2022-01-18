@@ -2,7 +2,7 @@ MODULE M2;
 FROM Scanner IMPORT proc30;
 FROM ComLine IMPORT commandLine, inName, PromptFor;
 BEGIN
-  PromptFor("File to compile: ", inName)
+  PromptFor("Name of File to compile: ", inName);
   proc30;
 EXCEPTION
   ELSE

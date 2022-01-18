@@ -1,0 +1,112 @@
+MODULE Adv14b;
+IMPORT BigNum,Texts,Out;
+CONST letters = "BCFHKNOPSV";
+TYPE BigInt = BigNum.INT64;
+     Stats  = ARRAY 10,10 OF BigInt;
+VAR t: Texts.TEXT;
+    n: INTEGER;
+    num:   ARRAY 26 OF INTEGER;
+    rule:  ARRAY 10,10 OF INTEGER;
+    oldStats, newStats: Stats;
+    result: BigInt;
+    str: ARRAY 18 OF CHAR;
+
+PROCEDURE InitNumbers;
+VAR chars: ARRAY 12 OF CHAR;
+    i : INTEGER;
+BEGIN
+  chars := letters;
+  FOR i:=0 TO 9 DO num[ORD(chars[i])-ORD("A")] := i END
+END InitNumbers;
+
+PROCEDURE ReadRule(t: Texts.TEXT);
+VAR first, second: INTEGER;
+    pair: ARRAY 2 OF CHAR;
+BEGIN
+  Texts.ReadString(t, pair);
+  first  := num[ORD(pair[0]) - ORD('A')];
+  second := num[ORD(pair[1]) - ORD('A')];
+  Texts.ReadString(t, pair);
+  ASSERT( pair = "->" );
+  Texts.ReadString(t, pair);
+  rule[first][second] := num[ORD(pair[0]) - ORD('A')];
+END ReadRule;
+
+PROCEDURE ReadInitialConfig(t: Texts.TEXT; VAR stats: Stats);
+VAR i, first, second: INTEGER;
+    str: ARRAY 30 OF CHAR;
+BEGIN
+  Texts.ReadString(t, str);
+  i := 1;
+  WHILE str[i] # 0X DO
+    first  := num[ORD(str[i-1]) - ORD('A')];
+    second := num[ORD(str[i]) - ORD('A')];
+    BigNum.Inc(stats[first][second], 1);
+    INC(i)
+  END
+END ReadInitialConfig;
+
+PROCEDURE ResetStats(VAR stats: Stats);
+VAR i,j: INTEGER;
+    zero: BigInt;
+BEGIN
+  BigNum.FromInt(0, zero);
+  FOR i:=0 TO 9 DO
+    FOR j:=0 TO 9 DO stats[i][j] := zero END
+  END
+END ResetStats;
+
+PROCEDURE CalcNextStats(old: Stats; VAR new: Stats);
+VAR first,second,inter: INTEGER;
+    count: BigInt;
+BEGIN
+  FOR first:=0 TO 9 DO
+    FOR second:=0 TO 9 DO
+      count := old[first][second];
+      inter := rule[first][second];
+      BigNum.Add(new[first][inter], count,new[first][inter]);
+      BigNum.Add(new[inter][second],count,new[inter][second]);
+    END
+  END
+END CalcNextStats;
+
+PROCEDURE PartB(stats: Stats; VAR result: BigInt);
+VAR firsts,seconds: ARRAY 10 OF BigInt;
+    min, max: BigInt;
+    i,j:INTEGER;
+    str: ARRAY 18 OF CHAR;
+BEGIN
+  FOR i:=0 TO 9 DO
+    BigNum.FromInt(0, firsts[i]);
+    BigNum.FromInt(0, seconds[i]);
+  END;
+  FOR i:=0 TO 9 DO
+    FOR j:=0 TO 9 DO
+      BigNum.Add(firsts[i], stats[i][j], firsts[i]);
+      BigNum.Add(seconds[j], stats[i][j], seconds[j]);
+    END
+  END;
+  FOR i:=0 TO 9 DO
+    IF BigNum.Before(firsts[i], seconds[i]) THEN firsts[i] := seconds[i] END
+  END;
+  min := firsts[0]; max := firsts[0];
+  FOR i:=1 TO 9 DO
+    IF BigNum.Before(firsts[i], min) THEN min:=firsts[i] END;
+    IF BigNum.Before(max, firsts[i]) THEN max:=firsts[i] END;
+  END;
+  BigNum.Sub(max,min,result);
+END PartB;
+
+BEGIN
+  InitNumbers;
+  ASSERT( Texts.OpenText(t, "input.14") );
+  ReadInitialConfig(t, newStats);
+  FOR n:=1 TO 100 DO ReadRule(t) END;
+
+  FOR n:=1 TO 10 DO
+    oldStats := newStats; ResetStats(newStats);
+    CalcNextStats(oldStats, newStats)
+  END;
+  PartB(newStats,result);
+  BigNum.ToString(result, str); Out.String(str); Out.Ln
+END Adv14b.

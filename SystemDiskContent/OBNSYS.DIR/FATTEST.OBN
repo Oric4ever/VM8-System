@@ -1,0 +1,24 @@
+MODULE FATtest;
+IMPORT Terminal, Disk, FAT32, SYSTEM;
+VAR result, n: INTEGER;
+    sector: Disk.LBA;
+    cluster1, cluster: FAT32.Cluster;
+
+PROCEDURE WriteLong(n: LONGINT);
+BEGIN
+  IF n >= LONG(10) THEN WriteLong(n DIV LONG(10)) END;
+  Terminal.WriteChar(CHR(ORD('0') + INT(n MOD LONG(10))))
+END WriteLong;
+
+BEGIN
+  Terminal.WriteString("Free cluster: ");
+  cluster1 := FAT32.FindFreeCluster();
+  cluster  := cluster1;
+  FOR n:=1 TO 96 DO
+    ASSERT( FAT32.NextSector(cluster, sector, TRUE) );
+    WriteLong(cluster); Terminal.WriteLn;
+  END;
+  FAT32.DeleteChain(cluster1);
+  
+  result := SYSTEM.SYS(0,0)
+END FATtest.

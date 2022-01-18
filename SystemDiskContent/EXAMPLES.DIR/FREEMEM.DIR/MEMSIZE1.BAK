@@ -1,0 +1,13 @@
+MODULE MemSize1;
+FROM STORAGE  IMPORT FREEMEM;
+FROM Texts    IMPORT Init;
+
+(*
+  Read readme.txt to see how to build this as a standalone system.
+*)
+
+BEGIN
+  Init; (* necessary because there will be no kernel to run the modules' initializations *)
+  WRITELN(FREEMEM(), ' bytes free.')
+  LOOP END; (* and nothing will catch execution after this "kernel" module *)
+END MemSize1.

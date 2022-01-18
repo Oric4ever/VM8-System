@@ -682,7 +682,10 @@ BEGIN
     REPEAT
       ptr := findReturn(ptr);
       IF ptr < endBuffer THEN INC(currentFileLine)
-      ELSE EDITDISK.proc2
+      ELSE
+        MoveBytesAfterCursorToBefore(endBuffer - ADDRESS(afterCursor));
+        EDITDISK.proc2;
+        ptr := afterCursor;
       END;
     UNTIL currentFileLine = line;
     MoveBytesAfterCursorToBefore(ptr - ADDRESS(afterCursor));

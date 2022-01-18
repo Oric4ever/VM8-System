@@ -116,8 +116,7 @@ BEGIN
   line := 0;
   IF errorFilePresent THEN
     Texts.ReadString(t, str);
-    IF str # "ERROR" THEN RETURN END;
-    Texts.ReadString(t, str); (* "line" *)
+    IF str # "line" THEN RETURN END;
     Texts.ReadCard(t, line);
     Texts.ReadString(t, str); (* "col" *)
     Texts.ReadCard(t, column);

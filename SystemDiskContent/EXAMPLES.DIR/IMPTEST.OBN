@@ -1,0 +1,6 @@
+MODULE ImpTest;
+IMPORT Consts, Out;
+BEGIN
+  Out.Int(Consts.first, 6);
+  Out.Int(Consts.second, 6);
+END ImpTest.

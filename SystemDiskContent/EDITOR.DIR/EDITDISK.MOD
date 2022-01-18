@@ -114,7 +114,7 @@ VAR str: ARRAY [0..7] OF CHAR;
     i : CARDINAL;
 BEGIN
   line := 0;
-  IF errorFilePresent THEN
+  IF errorFilePresent AND NOT Texts.EOT(t) THEN
     Texts.ReadString(t, str);
     IF str # "line" THEN RETURN END;
     Texts.ReadCard(t, line);

@@ -1,0 +1,22 @@
+MODULE Adv02a;
+IMPORT Texts, Out, ComLine;
+VAR horiz, depth, count: INTEGER;
+  i: INTEGER;
+  command: ARRAY 16 OF CHAR;
+  char: CHAR;
+  t : Texts.TEXT;
+BEGIN
+  IF Texts.OpenText(t, "input.02") THEN
+    Texts.ReadString(t, command);
+    WHILE NOT Texts.EOT(t) DO
+      Texts.ReadInt   (t, count);
+      IF    command = "forward" THEN horiz := horiz + count
+      ELSIF command = "down"    THEN depth := depth + count
+      ELSIF command = "up"      THEN depth := depth - count
+      ELSE Out.String("error")
+      END;
+      Texts.ReadString(t, command)
+    END;
+    Out.Int(horiz,5); Out.Int(depth, 5)
+  END;
+END Adv02a.

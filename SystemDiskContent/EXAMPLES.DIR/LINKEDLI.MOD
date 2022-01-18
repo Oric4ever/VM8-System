@@ -1,0 +1,100 @@
+MODULE LinkedList;
+
+TYPE Node*  = POINTER TO Box;
+     Box*   = TAGGED RECORD next: Node END;
+     List*  = Node;
+     Queue* = Node;
+     Stack* = Node;
+
+     Modifier*  = PROCEDURE(VAR item1: Box);
+     Predicate* = PROCEDURE(item: Box): BOOLEAN;
+
+PROCEDURE IsEmpty*(list: List): BOOLEAN;
+BEGIN RETURN list = NIL
+END IsEmpty;
+
+PROCEDURE Prepend*(VAR list: List; item: Node);
+BEGIN item.next := list; list := item;
+END Prepend;
+
+PROCEDURE Rest*(list: List; VAR rest: List);
+BEGIN
+  ASSERT(list # NIL); rest := list.next
+END Rest;
+
+PROCEDURE Get*(list: List; position: INTEGER; VAR item: Node);
+VAR i: INTEGER;
+BEGIN
+  ASSERT(position >= 0);
+  FOR i := 1 TO position DO ASSERT(list # NIL); list := list.next END;
+  ASSERT(list # NIL); item := list
+END Get;
+
+PROCEDURE Replace*(VAR list: List; position: INTEGER; item: Node);
+VAR pred : Node;
+    i: INTEGER;
+BEGIN
+  ASSERT(position >= 0);
+  ASSERT(list # NIL);
+  IF position = 0 THEN item.next := list.next; list := item
+  ELSE
+    pred := list;
+    FOR i := 2 TO position DO ASSERT(pred # NIL); pred := pred.next END;
+    ASSERT(pred # NIL); ASSERT(pred.next # NIL);
+    item.next := pred.next.next; pred.next := item
+  END
+END Replace;
+
+PROCEDURE Insert*(VAR list: List; position: INTEGER; item: Node);
+VAR pred : List;
+    i : INTEGER;
+BEGIN
+  ASSERT(position >= 0);
+  IF position = 0 THEN Prepend(list, item)
+  ELSE
+    pred := list;
+    FOR i := 2 TO position DO ASSERT(pred # NIL); pred := pred.next END;
+    ASSERT(pred # NIL); Prepend(pred.next, item)
+  END
+END Insert;
+
+PROCEDURE Delete*(VAR list: List; position: INTEGER);
+VAR pred : List;
+    i : INTEGER;
+BEGIN
+  ASSERT(position >= 0);
+  IF position = 0 THEN
+    ASSERT(list # NIL);
+    list := list.next
+  ELSE
+    pred := list;
+    FOR i := 2 TO position DO ASSERT(pred # NIL); pred := pred.next END;
+    ASSERT(pred # NIL); ASSERT(pred.next # NIL);
+    pred.next := pred.next.next
+  END;
+END Delete;
+
+PROCEDURE Add*(VAR list: List; item: Node);
+VAR pred : List;
+BEGIN
+  IF list = NIL THEN Prepend(list, item)
+  ELSE
+    pred := list;
+    WHILE pred.next # NIL DO pred := pred.next END;
+    Prepend(pred.next, item)
+  END
+END Add;
+
+PROCEDURE Map*(list: List; fct: Modifier);
+BEGIN
+  WHILE list # NIL DO fct(list^); list := list.next END
+END Map;
+
+PROCEDURE Find*(list: List; fct: Predicate; VAR item: Node);
+BEGIN
+  WHILE (list # NIL) & NOT fct(list^) DO list := list.next END;
+  item := list
+END Find;
+
+END LinkedList.
+

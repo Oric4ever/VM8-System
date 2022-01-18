@@ -1,0 +1,9 @@
+MODULE HelloSystem;
+IMPORT Out, SYSTEM;
+VAR result: INTEGER;
+BEGIN
+  Out.Card(SYSTEM.FREEMEM(), 5);
+  Out.String(" bytes free.");
+  Out.Ln;
+  result := SYSTEM.SYS(0,0);
+END HelloSystem.

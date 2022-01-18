@@ -1,0 +1,210 @@
+MODULE BigNum;
+IMPORT SYSTEM, Out;
+
+(* some ready-to-use types, a BigNum is an ARRAY OF BYTE *)
+TYPE INT32*  = ARRAY  4 OF BYTE;
+     INT64*  = ARRAY  8 OF BYTE;
+     INT128* = ARRAY 16 OF BYTE;
+
+(* Store an integer into a BigNum *)
+PROCEDURE FromInt*(x: INTEGER; VAR result: ARRAY OF BYTE);
+VAR i: INTEGER;
+    high: BYTE;
+BEGIN
+  i := LEN(result); ASSERT( i >= 2 );
+  IF x < 0 THEN high := 255 ELSE high := 0 END;
+  REPEAT DEC(i); result[i] := high UNTIL i <= 2;
+  result[1] := x DIV 256;
+  result[0] := x MOD 256;
+END FromInt;
+
+(* Store a long integer into a BigNum *)
+PROCEDURE FromLong*(x: LONGINT; VAR result: ARRAY OF BYTE);
+VAR i, msw, lsw: INTEGER;
+    high: BYTE;
+BEGIN
+  i := LEN(result); ASSERT( i >= 4 );
+  IF x < LONG(0) THEN high := 255 ELSE high := 0 END;
+  REPEAT DEC(i); result[i] := high UNTIL i <= 4;
+  result[3] := MSW(x) DIV 256;
+  result[2] := MSW(x) MOD 256;
+  result[1] := LSW(x) DIV 256;
+  result[0] := LSW(x) MOD 256;
+END FromLong;
+
+(* Increment a BigNum by n (0 <= n <= 255) *)
+PROCEDURE Inc*(VAR x: ARRAY OF BYTE; n: BYTE);
+VAR i: INTEGER;
+BEGIN
+  ASSERT( LEN(x) >= 1 );
+  CLC; x[0] := ADDC(x[0], n);
+  i := 1; WHILE CARRY() # 0 DO x[i] := ADDC(x[i], 0); INC(i) END
+END Inc;
+
+(* Add two BigNums *)
+PROCEDURE Add*(x,y: ARRAY OF BYTE; VAR result: ARRAY OF BYTE);
+VAR i: INTEGER;
+BEGIN
+  ASSERT( LEN(x) = LEN(y) );
+  ASSERT( LEN(x) = LEN(result) );
+  CLC;
+  i := 0; REPEAT result[i] := ADDC(x[i], y[i]); INC(i) UNTIL i = LEN(x);
+END Add;
+
+(* Substract two BigNums *)
+PROCEDURE Sub*(x,y: ARRAY OF BYTE; VAR result: ARRAY OF BYTE);
+VAR i: INTEGER;
+BEGIN
+  ASSERT( LEN(x) = LEN(y) );
+  ASSERT( LEN(x) = LEN(result) );
+  CLC;
+  i := 0; REPEAT result[i] := SUBC(x[i], y[i]); INC(i) UNTIL i = LEN(x);
+END Sub;
+
+(* Negate a BigNum *)
+PROCEDURE Neg*(x: ARRAY OF BYTE; VAR result: ARRAY OF BYTE);
+VAR i: INTEGER;
+BEGIN
+  ASSERT( LEN(x) = LEN(result) );
+  CLC;
+  i := 0; REPEAT result[i] := SUBC(0, x[i]); INC(i) UNTIL i = LEN(x);
+END Neg;
+
+(* Test if a BigNum is zero *)
+PROCEDURE IsZero*(x: ARRAY OF BYTE): BOOLEAN;
+VAR i: INTEGER;
+BEGIN
+  i := LEN(x); REPEAT DEC(i) UNTIL (x[i] # 0) OR (i = 0);
+  RETURN x[i] = 0
+END IsZero;
+
+(* Test if a BigNum is negative *)
+PROCEDURE IsNegative*(x: ARRAY OF BYTE): BOOLEAN;
+BEGIN
+  RETURN x[LEN(x)-1] >= 80H
+END IsNegative;
+
+(* Test if two BigNums are equal *)
+PROCEDURE Equal*(x,y: ARRAY OF BYTE): BOOLEAN;
+VAR i: INTEGER;
+BEGIN
+  i := LEN(x); ASSERT( i = LEN(y) );
+  REPEAT DEC(i) UNTIL (x[i] # y[i]) OR (i = 0);
+  RETURN x[i] = y[i]
+END Equal;
+
+(* Test if BigNum x is before BigNum y (unsigned comparison) *)
+PROCEDURE Before*(x,y: ARRAY OF BYTE): BOOLEAN;
+VAR i: INTEGER;
+BEGIN
+  i := LEN(x); ASSERT( i = LEN(y) );
+  REPEAT DEC(i) UNTIL (x[i] # y[i]) OR (i = 0);
+  RETURN x[i] < y[i]
+END Before;
+
+(* Multiply a BigNum by a single byte (0 <= factor <= 255) *)
+PROCEDURE MulBy*(x: ARRAY OF BYTE; factor: BYTE; VAR product: ARRAY OF BYTE);
+VAR i: INTEGER;
+BEGIN
+  ASSERT( LEN(x) = LEN(product) );
+  CLC;
+  i := 0; REPEAT product[i] := MULC(x[i], factor); INC(i) UNTIL i = LEN(x);
+END MulBy;
+
+(* Divide a BigNum by a single byte (0 <= divisor <= 255) *)
+PROCEDURE DivBy*(x: ARRAY OF BYTE; divisor: BYTE; VAR quotient: ARRAY OF BYTE);
+VAR i, tmp, rem: INTEGER;
+BEGIN
+  i := LEN(x); ASSERT( i = LEN(quotient) );
+  CLC;
+  REPEAT DEC(i); quotient[i] := DIVC(x[i], divisor) UNTIL i = 0;
+END DivBy;
+
+(* Convert a BigNum to its decimal string representation.
+   If the str buffer is too short, an assertion will fail
+*)
+PROCEDURE ToString*(VAR num: ARRAY OF BYTE; VAR str: ARRAY OF CHAR);
+VAR i: INTEGER;
+    remainder: BYTE;
+BEGIN
+  SYSTEM.FILL(SYSTEM.ADR(str), LEN(str), 20H);
+  i := LEN(str);
+  REPEAT
+    DEC(i);
+    DivBy(num, 10, num);
+    str[i] := CHR(ORD('0') + CARRY());
+  UNTIL IsZero(num) OR (i = 0);
+  ASSERT( IsZero(num) );
+END ToString;
+
+(* Convert a decimal string to a BigNum.
+   The value will be truncated if the size of the BigNum is too short
+*)
+PROCEDURE FromString*(str: ARRAY OF CHAR; VAR result: ARRAY OF BYTE);
+VAR i, digit: INTEGER;
+BEGIN
+  FromInt(0, result);
+  i := 0; WHILE (i < LEN(str)) & (str[i] = " ") DO INC(i) END;
+  REPEAT
+    MulBy(result, 10, result);
+    digit := ORD(str[i]) - ORD('0'); ASSERT( (digit >= 0) & (digit <= 9) );
+    Inc(result, digit);
+    INC(i)
+  UNTIL (i = LEN(str)) OR (str[i] = 0X);
+END FromString;
+
+PROCEDURE Mul*(x,y: ARRAY OF BYTE; VAR tmp,result: ARRAY OF BYTE);
+VAR i : INTEGER;
+BEGIN
+  FromInt(0, result);
+  FOR i:=LEN(x)-1 TO 0 BY -1 DO
+    (* shift the result *)
+    SYSTEM.COPY(SYSTEM.ADR(result), SYSTEM.ADR(result)+1, LEN(result)-1);
+    result[0] := 0;
+    (* multiply y by one byte *)
+    IF x[i] # 0 THEN MulBy(y,x[i],tmp); Add(tmp,result,result) END;
+  END;
+END Mul;
+
+PROCEDURE Div*(num,div : ARRAY OF BYTE; VAR tmp, quotient, remainder: ARRAY OF BYTE);
+VAR numHi, divHi, try, shiftBytes, alignedDiv, alignedNum, align: INTEGER;
+BEGIN
+  divHi := LEN(div); 
+  ASSERT( divHi = LEN(num) );
+  ASSERT( divHi = LEN(tmp) );
+  ASSERT( divHi = LEN(quotient) );
+  ASSERT( divHi = LEN(remainder) );
+  REPEAT DEC(divHi) UNTIL (div[divHi] # 0) OR (divHi = 0);
+  ASSERT( div[divHi] # 0 );
+  IF divHi = 0 THEN (* divide by a single byte *)
+    DivBy(num, div[0], quotient); FromInt(CARRY(), remainder)
+  ELSE (* two-bytes divisor at least, use the upper bits for enhanced precision guess *)
+    align := 1; alignedDiv := div[divHi];
+    WHILE alignedDiv < 80H DO align := align * 2; alignedDiv := alignedDiv * 2 END;
+    alignedDiv := alignedDiv + div[divHi-1] * align DIV 256;
+    FromInt(0, quotient);
+    SYSTEM.COPY(SYSTEM.ADR(num), SYSTEM.ADR(remainder), LEN(remainder));
+    numHi := LEN(num); REPEAT DEC(numHi) UNTIL (num[numHi] # 0) OR (numHi = 0);
+    IF num[numHi] < div[divHi] THEN DEC(numHi) END;
+    shiftBytes := numHi - divHi;
+    WHILE shiftBytes >= 0 DO
+      (* guess the quotient byte *)
+      alignedNum := remainder[numHi]*align + remainder[numHi-1]*align DIV 256;
+      IF numHi < LEN(remainder) THEN alignedNum := alignedNum+remainder[numHi+1]*align*256 END;
+      CLC; try := DIVC(alignedNum, alignedDiv);
+      (* calculate the partial product and shift it *)
+      MulBy(div, try, tmp); 
+      SYSTEM.COPY(SYSTEM.ADR(tmp), SYSTEM.ADR(tmp)+shiftBytes, LEN(tmp)-shiftBytes);
+      SYSTEM.FILL(SYSTEM.ADR(tmp), shiftBytes, 0);
+      (* substract and adjust if the guess was too high *)
+      Sub(remainder, tmp, remainder);
+      WHILE remainder[LEN(remainder)-1] >= 80H DO Add(remainder, div, remainder); DEC(try) END;
+      (* store the quotient byte *)
+      quotient[shiftBytes] := try;
+      DEC(shiftBytes); DEC(numHi);
+    END
+  END
+END Div;
+
+END BigNum.
+

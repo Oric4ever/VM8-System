@@ -1,0 +1,22 @@
+DEFINITION MODULE ComLine;
+FROM FATDIR IMPORT Directory;
+FROM Texts  IMPORT TEXT;
+
+VAR commandLine    : TEXT;
+    inName,outName : ARRAY [0..19] OF CHAR;
+    progName       : ARRAY [0..7] OF CHAR;
+    execute        : CARDINAL;
+    codepos        : CARDINAL;
+    commandBuffer  : ARRAY [0..79] OF CHAR;
+    cmdlineLength  : CARDINAL;
+    tabNames       : ARRAY [0..3],[0..16] OF CHAR;
+    tabDirs        : ARRAY [0..3] OF Directory;
+    currentTab     : CARDINAL;
+
+PROCEDURE RedirectInput;
+PROCEDURE RedirectOutput;
+PROCEDURE PromptFor(prompt: ARRAY OF CHAR; VAR s: ARRAY OF CHAR);
+PROCEDURE Chain(prog,args,inRedirect,outRedirect: ARRAY OF CHAR);
+
+END ComLine.
+

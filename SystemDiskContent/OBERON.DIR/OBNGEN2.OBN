@@ -1,5 +1,5 @@
 MODULE ObnGen2;
-  (* Code generator for MCode, F.Frances 2021. CAUTION: Work In Progress *)
+  (* Code generator for MCode, F.Frances 2021. *)
 IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
 
 (* $[+ remove procedure names *)
@@ -453,7 +453,6 @@ IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
   END Enter;
 
   PROCEDURE Return*(form: INTEGER; VAR x: Item; size: INTEGER);
-    VAR i: INTEGER;
   BEGIN
     IF form # OSymTab.NoTyp THEN
       push(x);
@@ -465,14 +464,24 @@ IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
       THEN Emit0 (88H + size)           (* LEAVE0..LEAVE3 *)
       ELSE Emit1B(84H,  size + 080H)    (* LEAVE n *)
       END;
-    END;
+    END
+  END Return;
+
+  PROCEDURE EndProc*;
+    VAR i: INTEGER;
+  BEGIN
     FOR i:=0 TO Gen1.pc-1 DO WriteByte(codePtr.code[i]) END; (* write program code *)
     procBase := procBase + Gen1.pc;
     Gen1.SetPC(0);                      (* empty the code buffer between two procedures *)
     inBody   := FALSE
-  END Return;
+  END EndProc;
 
-  (* In-line code procedures*)
+  PROCEDURE MissingReturn*;
+  BEGIN
+    IF OScanner.check THEN
+      Emit1B(EXTENDED,20); Gen1.EmitW(OScanner.Line()) (* ASSERT *)
+    END
+  END MissingReturn;
 
   PROCEDURE Assert*(VAR x: Item; addr: INTEGER);
   BEGIN
@@ -481,7 +490,7 @@ IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
       THEN Gen1.SetPC(addr) (* remove verified assertion *)
       ELSE OScanner.Mark("Assertion fails")
       END
-    ELSIF OScanner.check THEN Emit0(EXTENDED); Gen1.Emit1W(20, OScanner.Line()) (* ASSERT *)
+    ELSIF OScanner.check THEN Emit1B(EXTENDED,20); Gen1.EmitW(OScanner.Line()) (* ASSERT *)
     ELSE Gen1.SetPC(addr) (* remove checks *)
     END
   END Assert;
@@ -572,7 +581,7 @@ IMPORT OScanner, OSymTab, Gen1 := ObnGen1, Files, SYSTEM;
     END WriteModuleName;
 
   BEGIN (* Close *)
-    Emit0(50H); (* HALT, leave for the module's INIT/body: HALT or LEAVE *)
+    Emit0(88H); (* LEAVE, leave for the module's INIT/body: HALT or LEAVE *)
     pc := Gen1.pc;
     FOR i:=0 TO pc-1 DO WriteByte(codePtr.code[i]) END; (* write module body code *)
     initFlag := (pc > 4); (* more than these bytes were emitted: FF D4 FF 50 *)

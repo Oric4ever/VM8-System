@@ -1,0 +1,94 @@
+MODULE Adv13;
+IMPORT Texts, Out;
+CONST NbPoints = 881; NbFolds = 12;
+TYPE Coords = RECORD x,y: INTEGER END;
+VAR t: Texts.TEXT;
+    points: ARRAY NbPoints+1 OF Coords;
+    folds : ARRAY NbFolds+1  OF Coords;
+    nbPoints,i,j: INTEGER;
+    display: ARRAY 6,40 OF BOOLEAN;
+
+PROCEDURE ReadPoint(VAR p: Coords);
+VAR separator: CHAR;
+BEGIN
+  Texts.ReadInt (t, p.x);
+  Texts.ReadChar(t, separator);
+  Texts.ReadInt (t, p.y)
+END ReadPoint;
+
+PROCEDURE SortPoints;
+VAR i,j,best: INTEGER;
+    tmp: Coords;
+BEGIN
+  FOR i := 1 TO nbPoints DO
+    best := i;
+    FOR j := i+1 TO nbPoints DO
+      IF (points[j].y < points[best].y)
+      OR (points[j].y = points[best].y) & (points[j].x < points[best].x)
+      THEN best := j
+      END
+    END;
+    tmp := points[best]; points[best] := points[i]; points[i] := tmp;
+  END
+END SortPoints;
+
+PROCEDURE RemoveDups;
+VAR src, dst: INTEGER;
+BEGIN
+  dst := 0; src := 1;
+  WHILE src <= nbPoints DO
+    INC(dst); points[dst] := points[src];
+    INC(src);
+    WHILE (src <= nbPoints)
+     & (points[dst].x = points[src].x)
+     & (points[dst].y = points[src].y)
+    DO INC(src) END;
+  END;
+  nbPoints := dst
+END RemoveDups;
+
+PROCEDURE Fold(along: Coords);
+VAR i: INTEGER;
+BEGIN
+  FOR i := 1 TO nbPoints DO
+    IF along.x # 0 THEN
+      IF points[i].x > along.x THEN points[i].x := along.x * 2 - points[i].x END
+    ELSE
+      IF points[i].y > along.y THEN points[i].y := along.y * 2 - points[i].y END
+    END;
+  END;
+END Fold;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.13") );
+  nbPoints := NbPoints;
+  FOR i:=1 TO nbPoints DO ReadPoint(points[i]) END;
+
+  folds[ 1].x := 655;
+  folds[ 2].y := 447;
+  folds[ 3].x := 327;
+  folds[ 4].y := 223;
+  folds[ 5].x := 163;
+  folds[ 6].y := 111;
+  folds[ 7].x := 81;
+  folds[ 8].y := 55;
+  folds[ 9].x := 40;
+  folds[10].y := 27;
+  folds[11].y := 13;
+  folds[12].y := 6;
+
+  Fold(folds[1]); SortPoints; RemoveDups;
+  Out.String("Part A: "); Out.Int(nbPoints, 5); Out.Ln;
+
+  FOR i:=2 TO NbFolds DO Fold(folds[i]) END;
+  SortPoints; RemoveDups;
+
+  FOR i:=1 TO nbPoints DO display[points[i].y][points[i].x]] := TRUE END;
+  FOR j:=0 TO 5 DO
+    FOR i:=0 TO 39 DO
+      IF display[j][i] THEN Out.Char('#') ELSE Out.Char(' ') END
+    END;
+    Out.Ln
+  END
+END Adv13.
+

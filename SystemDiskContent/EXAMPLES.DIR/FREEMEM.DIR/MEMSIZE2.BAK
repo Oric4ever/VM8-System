@@ -1,0 +1,15 @@
+MODULE HELOKERN;
+FROM STORAGE  IMPORT FREEMEM;
+FROM Terminal IMPORT WriteChar, WriteString, WriteLn;
+IMPORT KERNEL3;
+
+PROCEDURE WriteCard(val: CARDINAL);
+BEGIN
+  IF val >= 10 THEN WriteCard(val DIV 10) END;
+  WriteChar(CHR(val MOD 10 + ORD('0')))
+END WriteCard;
+
+BEGIN
+  WriteCard(FREEMEM()); WriteString(' bytes free.'); WriteLn;
+END HELOKERN.
+

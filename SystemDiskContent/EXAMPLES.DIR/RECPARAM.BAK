@@ -1,0 +1,36 @@
+MODULE RecParams;
+(* test of automatic vs dynamic records *)
+IMPORT SYSTEM, Out;
+
+TYPE Record = RECORD
+                str: ARRAY 10 OF CHAR
+              END;
+     RecordPtr = POINTER TO Record;
+
+VAR r: Record;
+    p: RecordPtr;
+
+PROCEDURE P(r: Record);
+BEGIN
+  Out.String(r.str); Out.Ln
+END P;
+
+PROCEDURE Q(VAR r: Record);
+VAR ch: CHAR;
+BEGIN
+  ch := r.str[0];
+  IF (ch >= "a") & (ch <= "z") THEN r.str[0] := CHR(ORD(ch) - 32) END;
+END Q;
+
+BEGIN
+  r.str := "hello";
+  NEW(p); p.str := "world";
+  P(r); P(p);
+
+  Q(r); Q(p);
+  P(r); P(p);
+
+  r := p; P(r); (* copie du record, cool si on pouvait enlever le '^' *)
+  p := SYSTEM.VAL(RecordPtr, SYSTEM.ADR(r)); (* suffisamment moche *)
+  
+END RecParams.

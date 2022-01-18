@@ -1,0 +1,95 @@
+MODULE Adv04;
+IMPORT Texts, Out;
+CONST N = 100;
+TYPE Grid = ARRAY 5 OF ARRAY 5 OF INTEGER;
+
+VAR t: Texts.TEXT;
+    grids  : ARRAY N OF Grid;
+    numbers: ARRAY N OF INTEGER;
+    wonBoards : ARRAY N OF BOOLEAN;
+    i, n, wins, winner : INTEGER;
+
+PROCEDURE ReadGrid(VAR grid: Grid);
+VAR i,j: INTEGER;
+BEGIN
+  FOR i := 0 TO 4 DO
+    FOR j := 0 TO 4 DO
+      Texts.ReadInt(t, grid[i][j]);
+      ASSERT( Texts.Done(t) )
+    END
+  END
+END ReadGrid;
+
+PROCEDURE Mark(VAR grid: Grid; num: INTEGER): BOOLEAN;
+VAR i,j: INTEGER;
+    row, col: BOOLEAN;
+    bingo: BOOLEAN;
+BEGIN
+  FOR i := 0 TO 4 DO
+    FOR j := 0 TO 4 DO
+      IF grid[i][j] = num THEN grid[i][j] := -1 END
+    END
+  END;
+  bingo := FALSE;
+  FOR i := 0 TO 4 DO
+    row := TRUE; col := TRUE;
+    FOR j := 0 TO 4 DO
+      row := row AND (grid[i][j] < 0);
+      col := col AND (grid[j][i] < 0);
+    END;
+    bingo := bingo OR row OR col
+  END;
+  RETURN bingo
+END Mark;
+
+PROCEDURE Sum(grid: Grid): INTEGER;
+VAR i, j, sum: INTEGER;
+BEGIN
+  sum := 0;
+  FOR i := 0 TO 4 DO
+    FOR j := 0 TO 4 DO
+      IF grid[i][j] > 0 THEN sum := sum + grid[i][j] END
+    END
+  END;
+  RETURN sum
+END Sum;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.04") );
+  FOR i := 0 TO LEN(numbers)-1 DO
+    Texts.ReadInt (t, numbers[i]); ASSERT( Texts.Done(t) );
+    Texts.ReadChar(t, separator)
+  END;
+  FOR n := 0 TO LEN(grids)-1 DO ReadGrid(grids[n]) END;
+
+  i := -1;
+  wins := 0;
+  WHILE wins = 0 DO
+    INC(i);
+    FOR n := 0 TO LEN(grids)-1 DO
+      IF Mark(grids[n], numbers[i]) THEN INC(wins); winner := n END
+    END;
+  END;
+  wonBoards[winner] := TRUE;
+
+  Out.String("Part A:");
+  Out.Long( LONG(Sum(grids[winner])) * LONG(numbers[i]), 7);
+  Out.Ln;
+
+  WHILE wins # 100 DO
+    INC(i);
+    FOR n := 0 TO LEN(grids)-1 DO
+      IF NOT wonBoards[n] THEN
+        wonBoards[n] := Mark(grids[n], numbers[i]);
+        IF wonBoards[n] THEN INC(wins); winner := n END
+      END
+    END
+  END;
+
+  Out.String("Part B:");
+  Out.Long( LONG(Sum(grids[winner])) * LONG(numbers[i]), 7);
+  Out.Ln;
+
+
+END Adv04.
+

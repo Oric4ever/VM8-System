@@ -1,0 +1,44 @@
+MODULE ShellRes;
+IMPORT Terminal, Texts, Loader, ComLine;
+
+VAR index : INTEGER;
+    buffer: ARRAY 80 OF CHAR;
+
+PROCEDURE RunModule;
+BEGIN
+  IF NOT Loader.Call(ComLine.progName) THEN
+    Terminal.WriteString(ComLine.progName);
+    Terminal.WriteString(" not loaded.");
+    Terminal.WriteLn;
+  END
+END RunModule;
+
+PROCEDURE textDriver(text: TEXT; VAR ch: CHAR);
+CONST EOF = 1AX;
+BEGIN
+  IF (buffer[index] = '<') OR (buffer[index] = '>') THEN
+    REPEAT INC(index) UNTIL buffer[index] <= ' '
+  END;
+  ch := buffer[index];
+  IF ch = 0X THEN ch := EOF ELSE INC(index) END;
+END textDriver;
+
+BEGIN
+  LOOP
+    (* Re-initialize the Texts module *)
+    Texts.Init;
+
+    (* load the shell if we haven't a program to chain *)
+    IF ComLine.execute = 0 THEN
+(* TODO:      Texts.haltOnControlC := FALSE; *)
+      success := Loader.Call("SHELL3");
+(* TODO:      Texts.haltOnControlC := TRUE; *)
+    END;
+
+    (* once it has returned, we have more memory for the program to run *)
+    index := 0;
+    Texts.ConnectDriver(commandLine, textDriver);
+(* TODO:    ComLine.execute := 0;  *)
+    RunModule;
+  END;
+END ShellRes.

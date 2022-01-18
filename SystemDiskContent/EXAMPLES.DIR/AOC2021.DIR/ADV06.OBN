@@ -1,0 +1,41 @@
+MODULE Adv06;
+IMPORT Texts, BigNum, Out;
+CONST N=300;
+TYPE BigInt = BigNum.INT64;
+VAR t: Texts.TEXT;
+    i, n, timer: INTEGER;
+    fishes: ARRAY 9 OF BigInt;
+    partA, partB: BigInt;
+    numString: ARRAY 15 OF CHAR;
+    separator: CHAR;
+
+PROCEDURE NewDay;
+VAR i: INTEGER;
+    new: BigInt;
+BEGIN
+  new := fishes[0];
+  FOR i:=0 TO 7 DO fishes[i] := fishes[i+1] END;
+  fishes[8] := new;
+  BigNum.Add(fishes[6], new, fishes[6])
+END NewDay;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.06") );
+  FOR i:=1 TO 300 DO
+    Texts.ReadInt(t, timer); Texts.ReadChar(t, separator);
+    BigNum.Inc(fishes[timer], 1);
+  END;
+
+  FOR n:=1 TO 80 DO NewDay END;
+
+  FOR i:=0 TO 8 DO BigNum.Add(partA, fishes[i], partA) END;
+  BigNum.ToString(partA, numString);
+  Out.String(numString); Out.Ln;
+
+  FOR n:=81 TO 256 DO NewDay END;
+  
+  FOR i:=0 TO 8 DO BigNum.Add(partB, fishes[i], partB) END;
+  BigNum.ToString(partB, numString);
+  Out.String(numString); Out.Ln;
+
+END Adv06.

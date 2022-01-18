@@ -1,0 +1,13 @@
+MODULE T;
+EXCEPTION E;
+PROCEDURE P;
+BEGIN
+  RAISE E
+END P;
+
+BEGIN
+  P;
+  WRITE("huh ?")
+EXCEPTION
+| E : WRITE('ok')
+END T.

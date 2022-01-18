@@ -107,7 +107,8 @@ IMPORT OScanner, OSymTab, SYSTEM;
   VAR offset : INTEGER;
   BEGIN
     offset := x.a;
-    IF (x.type.size = 4) & (x.mode # OSymTab.Indirect) THEN
+    IF (x.type.size = 4) & (x.mode # OSymTab.Indirect)
+    & NOT (x.type.form IN {OSymTab.Array,OSymTab.Record}) THEN
       IF    x.r > 0 THEN Emit1B(08H, offset)          (* LLD n   : locals and params *)
       ELSIF x.r = 0 THEN Emit1B(09H, offset)          (* LGD n   : globals *)
       ELSE               Emit2B(0BH, -1-x.r, offset)  (* LED m n : externs *)
@@ -284,17 +285,16 @@ IMPORT OScanner, OSymTab, SYSTEM;
 (* Binary operators *)
 
   PROCEDURE Index2*(VAR x, y: Item);   (* x[y] *)
-    VAR size, lim, e: INTEGER;
+    VAR size, dim, e: INTEGER;
   BEGIN (* TODO produce better code for simple one-dimension arrays *)
     size := x.type.base.size; (* element size *)
-    lim  := x.type.len;        (* dimension *)
-    IF (y.mode = OSymTab.Const) & (lim >= 0) THEN
-      IF (y.a < 0) OR (y.a >= lim) THEN OScanner.Mark("bad index") END ;
-      IF x.mode IN {OSymTab.Var, OSymTab.Indirect}
-      THEN x.a := y.a * size  (* variable has been loaded by Index1, use x.a as index *)
-      ELSE x.a := x.a + y.a * size
+    dim  := x.type.len;        (* dimension *)
+    IF (y.mode = OSymTab.Const) & (dim >= 0) THEN
+      IF (y.a < 0) OR (y.a >= dim) THEN OScanner.Mark("bad index") END ;
+      IF x.mode = OSymTab.Indexed
+      THEN x.a := x.a + y.a * size
+      ELSE x.a := y.a * size; x.mode := Indexed
       END;
-      x.mode := Indexed
     ELSE (* index is not constant, we need the array address on stack now *)
       IF x.mode = Indexed THEN (* array is a record field *)
         IF x.a > 255
@@ -304,7 +304,7 @@ IMPORT OScanner, OSymTab, SYSTEM;
       END;
       push(y);  (* and also the index *)
       IF OScanner.check THEN  (*check array bounds*)
-        IF lim >= 0 THEN PushConstant(lim)
+        IF dim >= 0 THEN PushConstant(dim-1)
         ELSE (*open array*)
           ASSERT(x.mode IN {OSymTab.Var, OSymTab.Indirect});
           loadParam(x.a - 1)
@@ -570,7 +570,7 @@ IMPORT OScanner, OSymTab, SYSTEM;
           ELSE OScanner.Mark("different length/size, not implemented")
           END
         ELSE (*y  open array*)
-          loadParam(y.a - 1);  (* load open array's size *)
+          loadParam(y.a - 1);  (* load open array's limit *)
           Emit0(0ACH);              (* INC *)
           s := y.type.base.size;  (*element size*)
           IF isPower2(s, e) THEN

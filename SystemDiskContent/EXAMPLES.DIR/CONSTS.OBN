@@ -1,0 +1,6 @@
+MODULE Consts;
+
+CONST first*=1; second*=2;
+END Consts.
+
+

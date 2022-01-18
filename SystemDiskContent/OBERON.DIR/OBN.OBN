@@ -43,7 +43,10 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
     newSF  : BOOLEAN;           (* option flag*)
     modid  : OScanner.Ident;    (* module name *)
     pbsList: PtrBase;           (* list of names of pointer base types*)
+    paramBlockSize : INTEGER;   (* current procedure's paramBlockSize *)
+    currentProcType : OSymTab.Type;  (* current procedure's type *)
     dummy  : OSymTab.Object;
+    trace: BOOLEAN;
 
   PROCEDURE NextToken; BEGIN OScanner.Get(sym) END NextToken;
 
@@ -676,22 +679,28 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
       END
     END StandProc;
 
-    PROCEDURE TypeCase(obj: OSymTab.Object; VAR condList: INTEGER);
-      VAR typobj : OSymTab.Object;
+    PROCEDURE TypeCase(caseVar: OSymTab.Object; VAR condList: INTEGER);
+      VAR typobj,varCopy : OSymTab.Object;
           x      : OGenCode.Item;
-          orgtype: OSymTab.Type; (* original type of case variable *)
     BEGIN
-      OGenCode.MakeItem(x, obj, level);
+      OGenCode.MakeItem(x, caseVar, level);
       IF sym = OScanner.ident THEN
         qualident(typobj);
         IF typobj.class # OSymTab.Typ THEN OScanner.Mark("not a type") END ;
         TypeTest(x, typobj.type, FALSE);
-        orgtype  := obj.type;    (* save the original type of the variable *)
-        obj.type := typobj.type; (* variable is now considered as the selected type...*)
+        OSymTab.OpenScope;       (* open a new scope for the "copy" of the variable... *)
+        OSymTab.NewObj(varCopy, caseVar.name, caseVar.class);
+        varCopy.class:= caseVar.class;
+        varCopy.expo := caseVar.expo;
+        varCopy.type := typobj.type; (* the variable inherits the selected CASE type *)
+        varCopy.rdo  := caseVar.rdo;
+        varCopy.lev  := caseVar.lev;
+        varCopy.val  := caseVar.val;
+        varCopy.extension := caseVar.extension;
         OGenCode.FJump(condList, TRUE);
         Expect(OScanner.colon);
-        StatSequence;            (* ... for the duration of the statement sequence *)
-        obj.type := orgtype;     (* restore the original type for the next TypeTest *)
+        StatSequence;
+        OSymTab.CloseScope;      (* ... for the duration of the selected CASE *)
       ELSE OGenCode.FJump(condList, TRUE); OScanner.Mark("type id expected")
       END
      END TypeCase;
@@ -725,7 +734,7 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
 
   BEGIN (* StatSequence *)
     REPEAT (*sync*) obj := NIL;
-      IF ~((sym >= OScanner.ident)  & (sym <= OScanner.for) OR (sym >= OScanner.semicolon)) THEN
+      IF NOT((sym >= OScanner.ident) & (sym <= OScanner.return) OR (sym >= OScanner.semicolon)) THEN
         OScanner.Mark("statement expected");
         REPEAT NextToken UNTIL (sym >= OScanner.ident)
       END ;
@@ -780,6 +789,14 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
           ELSE OScanner.Mark("not a procedure")
           END
         END
+
+      ELSIF OScanner.extensions & (sym = OScanner.return) THEN
+        NextToken;
+        IF currentProcType.base # OSymTab.noType THEN
+          expression(x);
+          IF ~CompTypes(currentProcType.base, x.type, FALSE) THEN OScanner.Mark("wrong result type") END
+        END;
+        OGenCode.Return(currentProcType.base.form, x, paramBlockSize);
 
       ELSIF sym = OScanner.if THEN
         endList  := 0; (* end of branch links list *)
@@ -877,9 +894,9 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
 
       (* statements are separated by semi-colons *)
       IF sym = OScanner.semicolon THEN NextToken
-      ELSIF sym < OScanner.semicolon THEN OScanner.Missing(OScanner.semicolon)
+      ELSIF (sym < OScanner.semicolon) & (sym # OScanner.return) THEN OScanner.Missing(OScanner.semicolon)
       END
-    UNTIL sym > OScanner.semicolon
+    UNTIL (sym > OScanner.semicolon) OR (sym = OScanner.return) & NOT OScanner.extensions
   END StatSequence;
 
   PROCEDURE CheckRecLevel(lev: INTEGER);
@@ -952,7 +969,8 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
       END ;
       IdentList(class, first); FormalType(tp, 0); rdo := FALSE;
       IF (class = OSymTab.Var) & (tp.form >= OSymTab.Array) THEN class := OSymTab.Indirect; rdo := TRUE END ;
-      IF (tp = OSymTab.realType) OR (tp = OSymTab.longType) OR (tp.form = OSymTab.Proc)
+      IF (class # OSymTab.Indirect) &
+         ((tp = OSymTab.realType) OR (tp = OSymTab.longType) OR (tp.form = OSymTab.Proc))
       THEN paramsize := 2
       ELSE paramsize := 1
       END;
@@ -1247,10 +1265,10 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
   PROCEDURE ProcedureDecl;
     VAR
       proc  : OSymTab.Object;
-      type  : OSymTab.Type;
+      savedType : OSymTab.Type;
       procid: OScanner.Ident;
       x     : OGenCode.Item;
-      locblksize, parblksize: INTEGER;
+      locblksize, savedSize: INTEGER;
       arraySizes: OGenCode.VarSizes;
       heap : INTEGER;
   BEGIN
@@ -1258,14 +1276,18 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
     IF sym = OScanner.ident THEN
       OScanner.CopyId(procid); NextToken;
       OSymTab.NewObj(proc, OScanner.id, OSymTab.Const);
-      parblksize := 0;
-      NEW(type); type.form := OSymTab.Proc; type.size := OGenCode.WordSize;
-      proc.type := type;
+      savedSize := paramBlockSize; paramBlockSize := 0;
+      savedType := currentProcType;
+      NEW(currentProcType);
+      currentProcType.form := OSymTab.Proc;
+      currentProcType.size := OGenCode.WordSize * 2;
+      proc.type := currentProcType;
       proc.lev  := level;
       proc.val  := OGenCode.NextProcNum();
       CheckExport(proc.expo);
-      OSymTab.OpenScope; INC(level); type.base := OSymTab.noType;
-      ProcedureType(type, parblksize);  (*formal parameter list*)
+      OSymTab.OpenScope; INC(level);
+      currentProcType.base := OSymTab.noType;
+      ProcedureType(currentProcType, paramBlockSize);  (*formal parameter list*)
       Expect(OScanner.semicolon);
       SYSTEM.MARK(heap);
       Declarations(locblksize, arraySizes);
@@ -1274,19 +1296,28 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
         REPEAT ProcedureDecl; Expect(OScanner.semicolon) UNTIL sym # OScanner.procedure;
         proc.type.dsc := OSymTab.topScope.next
       END ;
-      OGenCode.Enter(proc, parblksize, locblksize, arraySizes);
+      OGenCode.Enter(proc, paramBlockSize, locblksize, arraySizes);
       Expect(OScanner.begin);
       StatSequence;
-      IF sym = OScanner.return THEN
-        NextToken; expression(x);
-        IF type.base = OSymTab.noType THEN OScanner.Mark("this is not a function")
-        ELSIF ~CompTypes(type.base, x.type, FALSE) THEN OScanner.Mark("wrong result type")
+      IF OScanner.extensions THEN  (* multiple RETURNs allowed *)
+        IF currentProcType.base = OSymTab.noType THEN
+          OGenCode.Return(currentProcType.base.form, x, paramBlockSize)
+        ELSE OGenCode.MissingReturn
         END
-      ELSIF type.base.form # OSymTab.NoTyp THEN
-        OScanner.Mark("function without result"); type.base := OSymTab.noType
-      END ;
-      OGenCode.Return(type.base.form, x, parblksize);
+      ELSE
+        IF sym = OScanner.return THEN
+          NextToken; expression(x);
+          IF currentProcType.base = OSymTab.noType THEN OScanner.Mark("this is not a function")
+          ELSIF ~CompTypes(currentProcType.base, x.type, FALSE) THEN OScanner.Mark("wrong result type")
+          END
+        ELSIF currentProcType.base.form # OSymTab.NoTyp THEN
+          OScanner.Mark("function without result"); currentProcType.base := OSymTab.noType
+        END ;
+        OGenCode.Return(currentProcType.base.form, x, paramBlockSize);
+      END;
+      OGenCode.EndProc;
       OSymTab.CloseScope; DEC(level);
+      currentProcType := savedType; paramBlockSize := savedSize;
       Expect(OScanner.end);
       IF sym = OScanner.ident THEN
         IF OScanner.id # procid THEN OScanner.Mark("no match") END ;
@@ -1309,6 +1340,10 @@ MODULE Obn; (*N. Wirth 1.7.97 / 8.3.2020  Oberon compiler *)
     (* dummy integer variable will replace undefined identifiers *)
     OSymTab.Init; OSymTab.OpenScope;
     NEW(dummy); dummy.class := OSymTab.Var; dummy.type := OSymTab.intType;
+
+    paramBlockSize  := 0; NEW(currentProcType);
+    currentProcType.form := OSymTab.Proc;
+    currentProcType.base := OSymTab.noType;     (* enables returning from the module's INIT *)
 
     NextToken;
     Expect(OScanner.module);
@@ -1341,13 +1376,13 @@ IF DEBUG THEN Out.String(" free memory : "); Out.Int(SYSTEM.FREEMEM(),5); Out.Ln
       OSymTab.Export(modid, newSF, key);
       OGenCode.Close(modid, key, arraySizes);
       staticSize := OGenCode.Here();
-      Out.String("Static size:"); Out.Int(staticSize, 6);
+      Out.String("Static size:"); Out.Card(staticSize, 6);
       bssSize := 0;
       FOR i:=2 TO dc+1 DO bssSize := bssSize + arraySizes[i] END;
-      Out.String(", bss:"); Out.Int(bssSize, 6); Out.String(" bytes.");
+      Out.String(", bss:"); Out.Card(bssSize, 6); Out.String(" bytes.");
     ELSE
       Out.Ln; Out.String("Errors found, see ERR file");
-      ComLine.Chain("ED", OScanner.inName, "")
+      ComLine.Chain("ED", OScanner.inName, "", "")
     END;
     Out.Ln;
     OSymTab.CloseScope;

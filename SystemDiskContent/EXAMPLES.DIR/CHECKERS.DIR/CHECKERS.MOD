@@ -1,0 +1,593 @@
+MODULE Checkers;
+FROM Unicode IMPORT WriteUTF8;
+FROM Terminal IMPORT ClearScreen, Highlight;
+IMPORT XTerm;
+FROM MathLib IMPORT Random;
+FROM SYSTEM IMPORT TSIZE, BYTE;
+FROM Texts IMPORT EOL;
+
+CONST WIN = 30000; LOSE = -30000;
+
+TYPE StdPosition = [1..32];
+TYPE Position = [0..45];
+(* Padded Array representation : moves are +4,+5,-4,-5
+   00  01  02  03   04
+  +----------------+
+04|  05  06  07  08|
+  |09  10  11  12  |13
+13|  14  15  16  17|
+  |18  19  20  21  |22
+22|  23  24  25  26|
+  |27  28  29  30  |31
+31|  32  33  34  35|
+  |36  37  38  39  |40
+  +----------------+
+40   41  42  43  44
+*)
+CONST FIRSTPOS =  5; LASTPOS   = 39; SECONDROW = 9; LASTROW = 36;
+      DOWNLEFT = +4; DOWNRIGHT = +5;
+      UPLEFT   = -5; UPRIGHT   = -4;
+      DIR1     = +4; DIR2      = +5;
+
+TYPE PieceBit = (BLACK, WHITE, KING, OUTSIDE);
+TYPE Color = [BLACK..WHITE];
+TYPE Piece = SET OF PieceBit;
+TYPE Move = ARRAY [0..5] OF Position;
+TYPE Hash = RECORD word1,word2: BITSET; END;
+
+TYPE Info = RECORD (* 16-bytes record *)
+              hash     : Hash;
+              depth    : ARRAY [0..1] OF BYTE; (* compacted base and dist *)
+              inf, sup : INTEGER;
+              bestMove : Move;
+            END;
+CONST BASE = 0; DIST = 1; (* indexes for the Info.depth array *)
+
+VAR board : ARRAY Position OF Piece;
+    score : ARRAY Color OF INTEGER;
+    directions : ARRAY [0..3] OF INTEGER;
+    base, maxDepth : CARDINAL;
+    moveToPlay : Move;
+
+PROCEDURE StdPositionToPadded(pos: StdPosition): Position;
+BEGIN
+  DEC(pos);
+  RETURN pos + FIRSTPOS + pos DIV 8;
+END StdPositionToPadded;
+
+PROCEDURE PaddedToStdPosition(pos: Position): StdPosition;
+BEGIN
+  DEC(pos, FIRSTPOS);
+  RETURN pos + 1 - pos DIV 9;
+END PaddedToStdPosition;
+
+PROCEDURE InitBoard;
+VAR pos: Position;
+    i  : StdPosition;
+BEGIN
+  FOR pos:= 0 TO HIGH(board) DO board[pos] := Piece{OUTSIDE} END;
+  FOR i:= 1 TO 12 DO board[StdPositionToPadded(i)] := Piece{BLACK} END;
+  FOR i:=13 TO 20 DO board[StdPositionToPadded(i)] := Piece{}      END;
+  FOR i:=21 TO 32 DO board[StdPositionToPadded(i)] := Piece{WHITE} END;
+  score[BLACK]  := 12; score[WHITE]  := 12;
+  directions[0] := +4; directions[1] := -4;
+  directions[2] := +5; directions[3] := -5;
+END InitBoard;
+
+PROCEDURE WriteInt(val: CARDINAL);
+BEGIN
+  IF val > 9 THEN WRITE(CHR(ORD('0')+ val DIV 10)) END;
+  WRITE(CHR(ORD('0') + val MOD 10))
+END WriteInt;
+
+PROCEDURE WriteBestMove;
+VAR from, dest: Position;
+    i : CARDINAL;
+BEGIN
+  from := moveToPlay[0]; dest := moveToPlay[1];
+  WriteInt(PaddedToStdPosition(from));
+  IF ABS(INT(dest) - INT(from)) > 5 THEN (* it's a jump *)
+    i := 1;
+    WHILE (i<=HIGH(moveToPlay)) AND (moveToPlay[i]<>0) DO
+      WRITE('x'); WriteInt(PaddedToStdPosition(moveToPlay[i]));
+      INC(i)
+    END;
+  ELSE
+    WRITE('-'); WriteInt(PaddedToStdPosition(dest))
+  END;
+END WriteBestMove;
+
+PROCEDURE PrintBoard;
+VAR row, column: CARDINAL;
+    pos: StdPosition;
+    piece: Piece;
+BEGIN
+  Highlight;
+  XTerm.Background(XTerm.BLACK);
+  ClearScreen;
+  XTerm.Foreground(XTerm.WHITE);
+  WRITELN("       1     2     3     4");
+  FOR row:=0 TO 7 DO
+    XTerm.Foreground(XTerm.WHITE);
+    IF row=1 THEN WRITE(' 5 ')
+    ELSIF ODD(row) THEN
+      WriteInt(row*4 + 1); WRITE(' ')
+    ELSE WRITE('   ');
+    END;
+    XTerm.Foreground(XTerm.BLACK);
+    FOR column:=0 TO 7 DO
+      IF ODD(row)=ODD(column) THEN
+        XTerm.Background(XTerm.CYAN); WRITE('   ')
+      ELSE
+        pos := StdPositionToPadded(row * 4 + column DIV 2 + 1);
+        XTerm.Background(XTerm.WHITE);
+        WRITE(' ');
+        piece := board[pos];
+        IF piece = Piece{BLACK,KING} THEN WriteUTF8(26C3H) END;
+        IF piece = Piece{WHITE,KING} THEN WriteUTF8(26C1H) END;
+        IF piece = Piece{BLACK}      THEN WriteUTF8(26C2H) END;
+        IF piece = Piece{WHITE}      THEN WriteUTF8(26C0H) END;
+        IF piece = Piece{}           THEN WRITE(' ') END;
+        WRITE(' ');
+      END;
+    END;
+    XTerm.Background(XTerm.BLACK);
+    IF NOT ODD(row) AND (row>1) THEN
+      XTerm.Foreground(XTerm.WHITE);
+      WRITE(' '); WriteInt(row*4 + 4);
+    END;
+    WRITELN
+  END;
+  XTerm.Foreground(XTerm.WHITE);
+END PrintBoard;
+
+(***********************************************************************************)
+(* Transposition table                                                             *)
+
+CONST HASHTABLESIZE = 0800H;
+      HASHMASK = HASHTABLESIZE-1;
+VAR currentHash : Hash;
+    pieceHashs  : ARRAY Position OF ARRAY [0..7] OF Hash;
+    hashTable   : ARRAY [0..HASHMASK] OF Info;
+
+PROCEDURE SwitchTurns;
+BEGIN
+  currentHash.word1 := currentHash.word1 / BITSET(5555H);
+  currentHash.word2 := currentHash.word2 / BITSET(5555H);
+END SwitchTurns;
+
+PROCEDURE WriteBinary(word: CARDINAL);
+VAR i: CARDINAL;
+BEGIN (* Write bits in reverse order, just to see if they are random *)
+  FOR i:=0 TO 15 DO WRITE(CHR(ORD('0')+ORD(ODD(word)))); word := word DIV 2 END;
+END WriteBinary;
+
+PROCEDURE RandomWord(): CARDINAL;
+BEGIN   (* bits 7 and 8 didn't seem random so took the bits above them *)
+  RETURN CARD(LONGINT(Random()) DIV 512L MOD 65536L)
+END RandomWord;
+
+PROCEDURE RandomHash(VAR hash: Hash);
+BEGIN
+  hash.word1 := BITSET(RandomWord());
+  hash.word2 := BITSET(RandomWord());
+END RandomHash;
+
+PROCEDURE InitHashes;
+VAR i: CARDINAL;
+BEGIN
+  FOR i := FIRSTPOS TO LASTPOS DO
+    RandomHash(pieceHashs[i][CARDINAL(Piece{BLACK})]);
+    RandomHash(pieceHashs[i][CARDINAL(Piece{WHITE})]);
+    RandomHash(pieceHashs[i][CARDINAL(Piece{BLACK,KING})]);
+    RandomHash(pieceHashs[i][CARDINAL(Piece{WHITE,KING})]);
+  END;
+  RandomHash(currentHash);
+END InitHashes;
+
+PROCEDURE RemovePiece(pos: Position): Piece;
+VAR piece: Piece;
+    pieceHash : Hash;
+BEGIN
+  piece := board[pos]; board[pos] := Piece{};
+  pieceHash := pieceHashs[pos][CARDINAL(piece)];
+  currentHash.word1 := currentHash.word1 / pieceHash.word1;
+  currentHash.word2 := currentHash.word2 / pieceHash.word2;
+  RETURN piece
+END RemovePiece;
+
+PROCEDURE AddPiece(pos: Position; piece: Piece);
+VAR pieceHash : Hash;
+BEGIN
+  board[pos] := piece;
+  pieceHash := pieceHashs[pos][CARDINAL(piece)];
+  currentHash.word1 := currentHash.word1 / pieceHash.word1;
+  currentHash.word2 := currentHash.word2 / pieceHash.word2;
+END AddPiece;
+
+PROCEDURE RetrieveInfo(depth: CARDINAL; VAR inf,sup: INTEGER; VAR bestMove: Move): BOOLEAN;
+VAR index : CARDINAL;
+    stored: Info;
+    dist : CARDINAL;
+BEGIN
+  dist := maxDepth + 16 - depth;
+  index := CARDINAL(currentHash.word1) MOD HASHTABLESIZE;
+  stored:= hashTable[index];
+  IF (stored.hash.word1 = currentHash.word1)
+  AND(stored.hash.word2 = currentHash.word2)
+  THEN
+    bestMove := stored.bestMove;
+    inf := stored.inf;
+    sup := stored.sup;
+    RETURN ORD(stored.depth[DIST]) = dist;
+  ELSE
+    RETURN FALSE
+  END;
+END RetrieveInfo;
+
+PROCEDURE StoreHashBoth(eval: INTEGER; depth: CARDINAL; move: Move);
+VAR index: CARDINAL;
+    stored: Info;
+    dist : CARDINAL;
+BEGIN
+  dist := maxDepth + 16 - depth;
+  index := CARDINAL(currentHash.word1) MOD HASHTABLESIZE;
+  stored:= hashTable[index];
+  IF (ORD(stored.depth[BASE]) <> CARD(base))
+  OR (ORD(stored.depth[DIST]) <= dist)
+  THEN
+    stored.inf         := eval;
+    stored.sup         := eval;
+    stored.hash        := currentHash;
+    stored.depth[BASE] := base;
+    stored.depth[DIST] := dist;
+    stored.bestMove    := move;
+    hashTable[index]   := stored;
+  END;
+END StoreHashBoth;
+
+PROCEDURE StoreHash(alpha, beta, g : INTEGER; depth: CARDINAL; move: Move);
+VAR index : CARDINAL;
+    stored: Info;
+    dist : CARDINAL;
+BEGIN
+  dist := maxDepth + 16 - depth;
+  index := CARDINAL(currentHash.word1) MOD HASHTABLESIZE;
+
+(*
+IF  (index= 63263 MOD HASHTABLESIZE)
+AND (CARDINAL(currentHash.word2)=63378)
+THEN
+  WRITELN("Write Hash ", CARDINAL(currentHash.word1));
+  WriteInt(PaddedToStdPosition(move[0]));WRITE('-');
+  WriteInt(PaddedToStdPosition(move[1]));WRITELN;
+  PrintBoard;
+END;
+*)
+
+  stored:= hashTable[index];
+  IF (ORD(stored.depth[BASE]) <> CARD(base))
+  OR (ORD(stored.depth[DIST]) <= dist)
+  THEN
+    IF (stored.hash.word1<>currentHash.word1) 
+    OR (stored.hash.word2<>currentHash.word2) 
+    OR (ORD(stored.depth[DIST]) <> dist) THEN
+    (* different position or different depth, we have to reset everything *)
+      stored.inf         := -MAX(INTEGER);
+      stored.sup         :=  MAX(INTEGER);
+      stored.depth[DIST] := dist;
+      stored.hash        := currentHash;
+    END;
+    stored.depth[BASE]   := base;
+    stored.bestMove      := move;
+    IF (g > alpha) AND (g < beta) THEN stored.inf := g; stored.sup := g
+    ELSIF g <= alpha THEN stored.sup := g
+    ELSIF g >= beta  THEN stored.inf := g
+    END;
+    hashTable[index] := stored;
+  END;
+END StoreHash;
+
+PROCEDURE PieceCanMove(pos: Position): BOOLEAN;
+VAR piece: Piece;
+BEGIN
+  piece := board[pos];
+  IF BLACK IN piece THEN
+    IF board[pos+4] = Piece{} THEN RETURN TRUE END;
+    IF board[pos+5] = Piece{} THEN RETURN TRUE END;
+    IF NOT (KING IN piece) THEN RETURN FALSE END;
+    IF board[pos-4] = Piece{} THEN RETURN TRUE END;
+    IF board[pos-5] = Piece{} THEN RETURN TRUE END;
+  ELSE
+    IF board[pos-4] = Piece{} THEN RETURN TRUE END;
+    IF board[pos-5] = Piece{} THEN RETURN TRUE END;
+    IF NOT (KING IN piece) THEN RETURN FALSE END;
+    IF board[pos+4] = Piece{} THEN RETURN TRUE END;
+    IF board[pos+5] = Piece{} THEN RETURN TRUE END;
+  END;
+END PieceCanMove;
+
+PROCEDURE PieceCanJump(pos: Position): BOOLEAN;
+VAR piece: Piece;
+BEGIN
+  piece := board[pos];
+  IF BLACK IN piece THEN
+    IF (WHITE IN board[pos+4]) AND (board[pos+8 ] = Piece{}) THEN RETURN TRUE END;
+    IF (WHITE IN board[pos+5]) AND (board[pos+10] = Piece{}) THEN RETURN TRUE END;
+    IF NOT (KING IN piece) THEN RETURN FALSE END;
+    IF (WHITE IN board[pos-4]) AND (board[pos-8 ] = Piece{}) THEN RETURN TRUE END;
+    IF (WHITE IN board[pos-5]) AND (board[pos-10] = Piece{}) THEN RETURN TRUE END;
+  ELSE
+    IF (BLACK IN board[pos-4]) AND (board[pos-8 ] = Piece{}) THEN RETURN TRUE END;
+    IF (BLACK IN board[pos-5]) AND (board[pos-10] = Piece{}) THEN RETURN TRUE END;
+    IF NOT (KING IN piece) THEN RETURN FALSE END;
+    IF (BLACK IN board[pos+4]) AND (board[pos+8 ] = Piece{}) THEN RETURN TRUE END;
+    IF (BLACK IN board[pos+5]) AND (board[pos+10] = Piece{}) THEN RETURN TRUE END;
+  END;
+  RETURN FALSE
+END PieceCanJump;
+
+PROCEDURE Eval(color: Color): INTEGER;
+BEGIN
+  RETURN score[color] - score[Color(1-ORD(color))]
+END Eval;
+
+PROCEDURE CheckPromotion(pos: Position; color: Color): BOOLEAN;
+BEGIN
+  IF (pos >= SECONDROW) AND (pos < LASTROW) OR (KING IN board[pos]) THEN RETURN FALSE END;
+  AddPiece(pos, RemovePiece(pos) + Piece{KING});
+  INC(score[color],2) ;
+  RETURN TRUE
+END CheckPromotion;
+
+PROCEDURE UndoPromotion(pos: Position; color: Color);
+BEGIN
+  AddPiece(pos, RemovePiece(pos) - Piece{KING});
+  DEC(score[color],2) ;
+END UndoPromotion;
+
+PROCEDURE Alphabeta(color: Color; alpha, beta: INTEGER; depth: CARDINAL): INTEGER;
+FORWARD;
+
+(* return the best evaluation of all jumps starting from position jumps[0],
+   not necessarily the maximum jump *)
+PROCEDURE FindBestJump(VAR jumps: Move; jumpNum: CARDINAL;
+                       piece: Piece; alpha,beta: INTEGER; depth: CARDINAL): INTEGER;
+VAR jumpFound, black, promotion : BOOLEAN;
+    color, adverse : Color;
+    i : CARDINAL;
+    pos, dir, eval : INTEGER;
+    takenPiece : Piece;
+    finalDest : Position;
+BEGIN
+  jumpFound := FALSE; black := BLACK IN piece;
+  IF black THEN color := BLACK; adverse := WHITE ELSE color := WHITE; adverse := BLACK END;
+  pos := jumps[jumpNum];
+  (* the jumping piece cannot stop if it can jump further, so try every direction *)
+  FOR i:=0 TO 3 DO
+    dir := directions[i];
+    IF (((dir>0)=black) OR (KING IN piece))
+    AND (adverse IN board[pos+dir]) AND (board[pos+dir+dir]=Piece{})
+    THEN
+      jumpFound := TRUE; INC(jumpNum); jumps[jumpNum] := pos+dir+dir;
+      takenPiece := RemovePiece(pos+dir);
+      IF KING IN takenPiece THEN DEC(score[adverse], 3) ELSE DEC(score[adverse]) END;
+      piece := RemovePiece(pos); AddPiece(pos+dir+dir, piece);
+      eval := FindBestJump(jumps, jumpNum, piece, alpha, beta, depth);
+      AddPiece(pos, piece); AddPiece(pos+dir, takenPiece); piece := RemovePiece(pos+dir+dir);
+      IF KING IN takenPiece THEN INC(score[adverse], 3) ELSE INC(score[adverse]) END;
+      IF eval > alpha THEN alpha := eval END;
+      IF alpha > beta THEN RETURN alpha END;
+    END;
+  END;
+  IF jumpFound THEN RETURN alpha END; (* return the best evaluation found *)
+
+  (* only evaluate with alphabeta when the jumping piece has finished its multijump *)
+  finalDest := jumps[jumpNum];
+  promotion := CheckPromotion(finalDest, color);
+  SwitchTurns;
+  eval := -Alphabeta(adverse, -beta, -alpha, depth+1);
+  SwitchTurns;
+  IF promotion THEN UndoPromotion(finalDest, color) END;
+  IF (eval > alpha) AND (depth = base) THEN (* top level best found *)
+    IF jumpNum < HIGH(jumps) THEN jumps[jumpNum+1] := 0 END;
+    moveToPlay := jumps
+  END;
+  RETURN eval
+END FindBestJump;
+
+PROCEDURE Alphabeta(color: Color; alpha, beta: INTEGER; depth: CARDINAL): INTEGER;
+VAR eval, dir, pos, inf, sup: INTEGER; i: CARDINAL;
+    foundJump, black, promotion: BOOLEAN;
+    dest : Position;
+    piece : Piece;
+    adverse: Color;
+    move : Move;
+    index : CARDINAL;
+BEGIN
+  (* don't clutter transposition table with positions where jump is forced *)
+  (* try to find a jump first, even if final depth has been reached *)
+  foundJump := FALSE;
+  FOR pos:=FIRSTPOS TO LASTPOS DO
+    IF (color IN board[pos]) AND PieceCanJump(pos) THEN
+      foundJump := TRUE;
+      move[0] := pos;
+      eval := FindBestJump(move, 0, board[pos], alpha, beta, depth);
+      IF eval > alpha  THEN alpha := eval END;
+      IF alpha >= beta THEN RETURN alpha END;
+    END;
+  END;
+  IF foundJump THEN RETURN alpha END; (* only jumps are legal here *)
+
+  (* no jump found => try other moves, but leave if max depth reached *)
+  IF depth >= maxDepth THEN RETURN Eval(color) END;
+
+  move[0] := 0; (* indicates no bestmove retrieved *)
+  IF RetrieveInfo(depth, inf, sup, move) THEN
+    IF depth = base  THEN moveToPlay := move END; (* highest level: move to play *)
+    IF inf =  sup    THEN RETURN inf       END; (* exact evaluation found *)
+    IF inf >  alpha  THEN alpha := inf     END;
+    IF sup <  beta   THEN beta  := sup     END;
+    IF alpha >= beta THEN RETURN alpha     END; (* alphabeta cut *)
+  END;
+ 
+  black := (color = BLACK); adverse := Color(1 - ORD(color));
+
+  IF move[0] <> 0 THEN (* a best move was retrieved, try it first *)
+    pos := move[0]; dest := move[1]; piece := board[pos];
+    IF NOT (color IN piece) OR (board[dest]<>Piece{}) THEN
+      WRITELN("FATAL ERROR: bad move retrieved");
+      WRITELN("Hash=", CARDINAL(currentHash.word1), CARDINAL(currentHash.word2));
+      WRITELN("depth =",depth);
+      WRITELN("color =",ORD(color));
+      moveToPlay := move; WriteBestMove; WRITELN;
+      PrintBoard;
+      HALT
+    END;
+    piece := RemovePiece(pos); AddPiece(dest,piece);
+    promotion := CheckPromotion(dest, color);
+    SwitchTurns;
+    eval := -Alphabeta(adverse, -beta, -alpha, depth+1);
+    SwitchTurns;
+    IF promotion THEN DEC(score[color],2) END;
+    AddPiece(pos, piece); piece := RemovePiece(dest);
+    IF eval > alpha THEN
+      alpha := eval;
+      IF depth = base THEN moveToPlay := move END;
+    END;
+    IF alpha >= beta THEN
+      StoreHash(alpha,beta,alpha,depth,move);
+      RETURN alpha 
+    END;
+  END;
+
+  (* prepare LOSE value in case we don't find any move *)
+  IF alpha < LOSE+INT(depth-base) THEN alpha := LOSE+INT(depth-base) END;
+  FOR pos:=FIRSTPOS TO LASTPOS DO
+    piece := board[pos];
+    IF color IN piece THEN (* found our color *)
+      FOR i:=0 TO 3 DO
+        dir := directions[i]; dest := pos+dir;
+        IF (((dir>0)=black) OR (KING IN piece))
+        AND (board[dest] = Piece{})
+        AND ((CARD(pos)<>move[0]) OR (CARD(dest)<>move[1]))
+        THEN
+          piece := RemovePiece(pos); AddPiece(dest, piece);
+          promotion := CheckPromotion(dest, color);
+          SwitchTurns;
+          eval := -Alphabeta(adverse, -beta, -alpha, depth+1);
+          SwitchTurns;
+          IF promotion THEN DEC(score[color],2) END;
+          AddPiece(pos, piece); piece := RemovePiece(dest);
+          IF eval > alpha THEN
+            alpha := eval;
+            move[0] := pos; move[1] := dest;
+            IF depth = base THEN moveToPlay := move END;
+          END;
+          IF alpha >= beta THEN
+            StoreHash(alpha,beta,alpha,depth,move);
+            RETURN alpha
+          END;
+        END;
+      END;
+    END;
+  END;
+  StoreHash(alpha,beta,alpha,depth,move);
+  RETURN alpha
+END Alphabeta;
+  
+PROCEDURE PlayBest(color: Color);
+VAR piece, takenPiece : Piece;
+    from, dest, between : Position;
+    adverse : Color;
+    jumpNum : CARDINAL;
+    promotion: BOOLEAN;
+BEGIN
+  from := moveToPlay[0]; dest := moveToPlay[1];
+  piece := RemovePiece(from);
+  IF ABS(INT(dest) - INT(from)) > 5 THEN (* it's a jump, remove jumped pieces *)
+    adverse := Color(1 - ORD(color));
+    jumpNum := 1;
+    WHILE (jumpNum<=HIGH(moveToPlay)) AND (moveToPlay[jumpNum] <> 0) DO
+      from := moveToPlay[jumpNum-1];
+      dest := moveToPlay[jumpNum];
+      between := (from + dest) DIV 2;
+      takenPiece := RemovePiece(between);
+      IF KING IN takenPiece THEN DEC(score[adverse], 3) ELSE DEC(score[adverse]) END;
+      INC(jumpNum);
+    END;
+    from := moveToPlay[0];
+  END;
+  AddPiece(dest, piece);
+  promotion := CheckPromotion(dest, color);
+END PlayBest;
+
+VAR color, human: Color;
+
+PROCEDURE ReadMove;
+VAR jumpNum: CARDINAL;
+    separator: CHAR;
+    pos, dest, dist : CARDINAL;
+    foundJump : BOOLEAN;
+    piece : Piece;
+BEGIN
+  foundJump := FALSE;
+  FOR pos:=FIRSTPOS TO LASTPOS DO
+    IF (human IN board[pos]) AND PieceCanJump(pos) THEN
+      foundJump := TRUE;
+    END;
+  END;
+  IF foundJump THEN
+    REPEAT
+      WRITE("Jump from: ");
+      READ(pos); pos := StdPositionToPadded(pos);
+    UNTIL (human IN board[pos]) AND PieceCanJump(pos);
+    moveToPlay[2] := 0;
+    REPEAT
+      moveToPlay[0] := pos;
+      WRITE("Jump to: ");
+      READ(pos); pos := StdPositionToPadded(pos);
+      moveToPlay[1] := pos;
+      PlayBest(color);
+      PrintBoard;
+    UNTIL NOT PieceCanJump(pos);
+  ELSE
+    REPEAT
+      WRITE("Move from: ");
+      READ(pos); pos := StdPositionToPadded(pos);
+      moveToPlay[0] := pos;
+    UNTIL (human IN board[pos]) AND PieceCanMove(pos);
+    REPEAT
+      WRITE("Move to: ");
+      READ(pos); pos := StdPositionToPadded(pos);
+      moveToPlay[1] := pos;
+      dist := ABS(INT(pos)-INT(moveToPlay[0]));
+    UNTIL ((dist=4) OR (dist=5)) AND (board[pos]=Piece{});
+    PlayBest(color);
+  END;
+END ReadMove;
+
+VAR eval, i: INTEGER;
+BEGIN
+  InitHashes;
+  ClearScreen;
+  InitBoard;
+  color := BLACK; human := WHITE;
+  REPEAT
+    INC(base);
+    PrintBoard;
+    IF color = human THEN
+      ReadMove;
+    ELSE
+      FOR maxDepth:= base+1 TO base+7 DO
+        eval := Alphabeta(color, -MAX(INTEGER), MAX(INTEGER), base);
+        WRITE("Level "); WriteInt(maxDepth-base);
+        WRITE(" =",eval,' : '); WriteBestMove; WRITELN;
+      END;
+      PlayBest(color);
+    END;
+    color := Color(1 - ORD(color));
+    SwitchTurns;
+  UNTIL (score[BLACK] = 0) OR (score[WHITE] = 0);
+END Checkers.
+

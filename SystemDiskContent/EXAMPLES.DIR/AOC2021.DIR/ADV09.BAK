@@ -1,0 +1,73 @@
+MODULE Adv09;
+IMPORT Texts, Out, Terminal;
+CONST Size = 100;
+VAR t: Texts.TEXT;
+    line: ARRAY Size OF CHAR;
+    grid: ARRAY Size+2,Size+2 OF INTEGER;
+    n, i, j, count, sum, tmp: INTEGER;
+    ch: CHAR;
+    area: ARRAY 250 OF INTEGER;
+    product: LONGINT;
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.09") );
+  FOR n:=0 TO Size+1 DO
+    grid[0][n] := 9;
+    grid[n][0] := 9;
+    grid[Size+1][n] := 9;
+    grid[n][Size+1] := 9;
+  END;
+  FOR j:=1 TO Size DO
+    Texts.ReadLine(t, line);
+    FOR i:=1 TO Size DO
+      grid[j][i] := ORD(line[i-1])-ORD('0');
+      ASSERT( (grid[j][i] >= 0) & (grid[j][i] <= 9) )
+     END;
+  END;
+
+  FOR j:=1 TO Size DO
+    FOR i:=1 TO Size DO
+      n := grid[j][i];
+      IF (n < grid[j-1][i])
+       & (n < grid[j+1][i])
+       & (n < grid[j][i-1])
+       & (n < grid[j][i+1])
+      THEN
+        INC(count);
+        grid[j][i] := -count;
+        sum := sum + n + 1
+      END;
+    END;
+  END;
+  Out.String("Part A:"); Out.Int(sum, 5); Out.Ln;
+
+  FOR n:=1 TO 8 DO
+    FOR j:=1 TO Size DO
+      FOR i:=1 TO Size DO
+        IF grid[j][i] < 9 THEN
+          IF grid[j][i] > grid[j-1][i] THEN grid[j][i] := grid[j-1][i] END;
+          IF grid[j][i] > grid[j+1][i] THEN grid[j][i] := grid[j+1][i] END;
+          IF grid[j][i] > grid[j][i-1] THEN grid[j][i] := grid[j][i-1] END;
+          IF grid[j][i] > grid[j][i+1] THEN grid[j][i] := grid[j][i+1] END;
+        END
+      END
+    END
+  END;
+
+  FOR j:=1 TO Size DO
+    FOR i:=1 TO Size DO
+      n := grid[j][i];
+      IF n < 0 THEN INC(area[-n]) END
+    END
+  END;
+  
+  product := LONG(1);
+  FOR i:=1 TO 3 DO
+    FOR n:=LEN(area)-1 TO i+1 BY -1 DO
+      IF area[n] > area[n-1] THEN tmp:=area[n-1]; area[n-1]:=area[n]; area[n]:=tmp END
+    END;
+    product := product * area[i]
+  END;
+  Out.String("Part B:"); Out.Long(product, 8); Out.Ln;
+
+END Adv09.
+

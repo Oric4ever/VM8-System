@@ -1,0 +1,19 @@
+line   14 col  18 ERROR: undef
+line   14 col  24 ERROR: not an array
+line   14 col  31 ERROR: not an array
+line   22 col  22 ERROR: undef
+line   22 col  27 ERROR: not an array
+line   23 col   9 ERROR: undef
+line   23 col  14 ERROR: not an array
+line   34 col  30 ERROR: undef
+line   34 col  35 ERROR: not an array
+line   37 col  35 ERROR: undef
+line   37 col  36 ERROR: not a record
+line   37 col  57 ERROR: too many params
+line   39 col  13 ERROR: undef
+line   39 col  14 ERROR: not a record
+line   39 col  32 ERROR: undef
+line   41 col  28 ERROR: undef
+line   48 col  15 ERROR: undef
+line   48 col  20 ERROR: not an array
+

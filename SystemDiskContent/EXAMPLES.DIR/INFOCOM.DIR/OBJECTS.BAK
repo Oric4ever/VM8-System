@@ -1,0 +1,130 @@
+IMPLEMENTATION MODULE Objects;
+FROM SYSTEM IMPORT TSIZE;
+IMPORT GameFile;
+FROM Support IMPORT RetValue, Store;
+FROM Print   IMPORT PrintAddr;
+
+CONST OBJECTSOFFSET = 035H;
+
+TYPE Byte      = [0..255];
+     Object    = ARRAY [0..8] OF Byte; (* only way to have contiguous 1-byte elements *)
+     ObjectPtr = POINTER TO Object;
+(* Objects' bytes are named with these constants : *)
+CONST PARENT = 4; SIBLING = 5; CHILD = 6; PROP1 = 7; PROP2 = 8;
+
+PROCEDURE ObjAddr(objNum: CARDINAL): ADDRESS;
+BEGIN
+  IF objNum = 0 THEN RETURN NIL END;
+  RETURN GameFile.objBase + ORD(objNum) * TSIZE(Object) + OBJECTSOFFSET;
+END ObjAddr;
+
+PROCEDURE PropTableAddr(objNum: CARDINAL): ADDRESS;
+VAR obj : ObjectPtr;
+    ptr : POINTER TO ARRAY [0..0] OF Byte;
+    textLength : CARDINAL;
+BEGIN
+  obj := ObjAddr(objNum);
+  ptr := GameFile.basePtr + obj^[PROP1] * 256 + obj^[PROP2];
+  textLength := ptr^[0] * 2;
+  RETURN ADDRESS(ptr) + 1 + textLength (* skip the short name of object *)
+END PropTableAddr;
+
+PROCEDURE  PrintObj(objNum: CARDINAL);
+VAR obj : ObjectPtr;
+BEGIN
+  obj    := ObjAddr(objNum);
+  PrintAddr( obj^[PROP1] * 256 + obj^[PROP2] )
+END PrintObj;
+
+PROCEDURE CutObj(obj: ObjectPtr; objNum: CARDINAL);
+VAR parent: ObjectPtr;
+BEGIN
+  parent := ObjAddr(obj^[PARENT]);
+  IF parent = NIL THEN RETURN END;
+  IF parent^[CHILD] = objNum THEN parent^[CHILD] := obj^[SIBLING]
+  ELSE
+    parent := ObjAddr(parent^[CHILD]);
+    WHILE parent^[SIBLING] # objNum DO parent := ObjAddr(parent^[SIBLING]) END;
+    parent^[SIBLING] := obj^[SIBLING];
+  END;
+  obj^[PARENT] := 0;
+  obj^[SIBLING]:= 0;
+END CutObj;
+
+PROCEDURE RemoveObj(objNum: CARDINAL);
+BEGIN
+  CutObj(ObjAddr(objNum), objNum)
+END RemoveObj;
+
+PROCEDURE InsertObj(o1, o2: CARDINAL);
+VAR obj1, obj2: ObjectPtr;
+BEGIN
+  obj1 := ObjAddr(o1); obj2 := ObjAddr(o2);
+  CutObj(obj1, o1);
+  obj1^[SIBLING] := obj2^[CHILD];
+  obj1^[PARENT]  := o2;
+  obj2^[CHILD]   := o1;
+END InsertObj;
+
+PROCEDURE  TestAttr(objNum, attribute: CARDINAL);
+VAR obj : ObjectPtr;
+BEGIN
+  obj := ObjAddr(objNum);
+  RetValue( (7 - attribute MOD 8) IN BITSET(obj^[attribute DIV 8]) )
+END TestAttr;
+
+PROCEDURE   SetAttr(objNum, attribute: CARDINAL);
+VAR obj : ObjectPtr;
+    bits: BITSET;
+BEGIN
+  obj  := ObjAddr(objNum);
+  bits := BITSET(obj^[attribute DIV 8]);
+  INCL(bits, 7 - attribute MOD 8);
+  obj^[attribute DIV 8] := Byte(bits);
+END SetAttr;
+
+PROCEDURE ClearAttr(objNum, attribute: CARDINAL);
+VAR obj : ObjectPtr;
+    bits: BITSET;
+BEGIN
+  obj  := ObjAddr(objNum);
+  bits := BITSET(obj^[attribute DIV 8]);
+  EXCL(bits, 7 - attribute MOD 8);
+  obj^[attribute DIV 8] := Byte(bits);
+END ClearAttr;
+
+PROCEDURE GetParent(objNum: CARDINAL);
+VAR obj: ObjectPtr;
+BEGIN
+  obj := ObjAddr(objNum);
+  Store( obj^[PARENT] );
+END GetParent;
+
+PROCEDURE GetChild(objNum: CARDINAL);
+VAR obj: ObjectPtr;
+    holds: CARDINAL;
+BEGIN
+  obj   := ObjAddr(objNum);
+  holds := obj^[CHILD];
+  Store(holds);
+  RetValue( holds # 0 );
+END GetChild;
+
+PROCEDURE GetSibling(objNum: CARDINAL);
+VAR obj: ObjectPtr;
+    link: CARDINAL;
+BEGIN
+  obj   := ObjAddr(objNum);
+  link  := obj^[SIBLING];
+  Store(link);
+  RetValue( link # 0 );
+END GetSibling;
+
+PROCEDURE CheckLoc(o1, o2: CARDINAL);
+VAR obj: ObjectPtr;
+BEGIN
+  obj   := ObjAddr(o1);
+  RetValue( obj^[PARENT] = o2 );
+END CheckLoc;
+
+END Objects.

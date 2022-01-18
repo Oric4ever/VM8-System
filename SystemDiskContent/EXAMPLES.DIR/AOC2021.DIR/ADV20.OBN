@@ -1,0 +1,76 @@
+MODULE Adv20;
+IMPORT Texts, Out;
+CONST N=100; STEPS=50; Size = N + 2 + 2*STEPS;
+TYPE Grid = ARRAY Size,Size OF BOOLEAN;
+
+VAR t: Texts.TEXT;
+    grid: Grid;
+    algo: ARRAY 512 OF BOOLEAN;
+    i,j,step: INTEGER;
+    char: CHAR;
+
+PROCEDURE Generate(step: INTEGER; VAR grid: Grid);
+VAR i,j,x,y,value: INTEGER;
+    lighted: BOOLEAN;
+    old: ARRAY 3,Size OF BOOLEAN;
+BEGIN
+  old[1] := grid[0];
+  old[2] := grid[1];
+  FOR j := 1 TO Size-2 DO
+    old[0] := old[1]; old[1] := old[2]; old[2] := grid[j+1];
+    FOR i := 1 TO Size-2 DO
+      value := 0;
+      FOR y := 0 TO 2 DO
+        FOR x := i-1 TO i+1 DO
+          value := value * 2 + ORD(old[y][x])
+        END
+      END;
+      grid[j][i] := algo[value]
+    END
+  END;
+  lighted := ODD(step);
+  FOR j := 0 TO Size-1 DO grid[j][0] := lighted; grid[j][Size-1] := lighted END;
+  FOR i := 0 TO Size-1 DO grid[0][i] := lighted; grid[Size-1][i] := lighted END;
+END Generate;
+
+PROCEDURE Count(grid: Grid):INTEGER;
+VAR count,i,j: INTEGER;
+BEGIN
+  count := 0;
+  FOR j:=0 TO Size-1 DO
+    FOR i:=0 TO Size-1 DO
+      count := count + ORD(grid[j][i])
+    END
+  END;
+  RETURN count
+END Count;
+
+PROCEDURE Print(grid: Grid);
+VAR i,j: INTEGER;
+BEGIN
+  FOR j:=0 TO Size-1 DO
+    FOR i:=0 TO Size-1 DO
+      IF grid[j][i] THEN Out.Char('#') ELSE Out.Char('.') END
+    END;
+    Out.Ln
+  END
+END Print;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.20") );
+  FOR i:=0 TO 511 DO Texts.ReadChar(t, char); algo[i] := char = '#' END;
+  Texts.ReadLn(t); Texts.ReadLn(t);
+  FOR j:=1 TO N DO
+    FOR i:=1 TO N DO
+      Texts.ReadChar(t, char); grid[j+STEPS][i+STEPS] := char = '#'
+    END;
+    Texts.ReadLn(t)
+  END;
+  Texts.CloseText(t);
+
+  FOR step := 1 TO 2 DO Generate(step, grid) END;
+  Out.String("Part A: "); Out.Int(Count(grid), 5); Out.Ln;
+
+  FOR step := 3 TO 50 DO Generate(step, grid) END;
+  Out.String("Part B: "); Out.Int(Count(grid), 5); Out.Ln;
+END Adv20.

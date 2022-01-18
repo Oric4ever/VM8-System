@@ -1,50 +1,29 @@
-IMPLEMENTATION MODULE Out;
-FROM SYSTEM IMPORT BIOS;
-IMPORT Convert;
+MODULE Out;
+IMPORT Texts;
 
-CONST CONOUT = 3; CR = 015C; LF = 012C;
-
-PROCEDURE Char  (ch: CHAR);
-BEGIN BIOS(CONOUT, ch)
+PROCEDURE Char*  (ch: CHAR);
+BEGIN Texts.WriteChar(Texts.output, ch)
 END Char;
 
-PROCEDURE String(s: ARRAY OF CHAR);
-VAR i: CARDINAL;
-BEGIN
-  i := 0;
-  WHILE (i <= HIGH(s)) & (s[i] # 0C) DO
-    Char(s[i]);
-    INC(i)
-  END
+PROCEDURE String*(s: ARRAY OF CHAR);
+BEGIN Texts.WriteString(Texts.output, s)
 END String;
 
-PROCEDURE Int   (i, n: INTEGER);
-VAR s: ARRAY [0..5] OF CHAR;
-BEGIN
-  Convert.IntToStr(i, s);
-  WHILE n > 6 DO Char(' ');    DEC(n) END;
-  WHILE n > 0 DO Char(s[6-n]); DEC(n) END;
+PROCEDURE Int*   (i, n: INTEGER);
+BEGIN Texts.WriteInt(Texts.output, i, n)
 END Int;
 
-PROCEDURE Card   (i, n: INTEGER);
-VAR s: ARRAY [0..5] OF CHAR;
-BEGIN
-  Convert.IntToCard(i, s);
-  WHILE n > 6 DO Char(' ');    DEC(n) END;
-  WHILE n > 0 DO Char(s[6-n]); DEC(n) END;
+PROCEDURE Card*  (i, n: INTEGER);
+BEGIN Texts.WriteCard(Texts.output, i, n)
 END Card;
 
-PROCEDURE Long  (l: LONGINT; n: INTEGER);
-VAR s: ARRAY [0..9] OF CHAR;
-BEGIN
-  Convert.LongToStr(l, s);
-  WHILE n > 10 DO Char(' ');     DEC(n) END;
-  WHILE n > 0  DO Char(s[10-n]); DEC(n) END;
+PROCEDURE Long*  (l: LONGINT; n: INTEGER);
+BEGIN Texts.WriteLong(Texts.output, l, n)
 END Long;
 
-PROCEDURE Hex   (i: INTEGER);
-  PROCEDURE HexByte(i: CARDINAL);
-    PROCEDURE HexDigit(i: CARDINAL);
+PROCEDURE Hex*   (i: INTEGER);
+  PROCEDURE HexByte(i: INTEGER);
+    PROCEDURE HexDigit(i: INTEGER);
     BEGIN
       IF i < 10
       THEN Char(CHR(i + ORD('0')))
@@ -57,19 +36,16 @@ PROCEDURE Hex   (i: INTEGER);
   END HexByte;
 BEGIN
   Char(' ');
-  HexByte( CARDINAL(i) DIV 256 );
-  HexByte( CARDINAL(i) MOD 256 );
+  HexByte( i DIV 256 );
+  HexByte( i MOD 256 );
 END Hex;
 
-PROCEDURE Real  (x: REAL; n: INTEGER);
-VAR s: ARRAY [0..11] OF CHAR;
-BEGIN
-  Convert.RealToStr(x, s, n);
-  FOR n:=0 TO 11 DO Char(s[n]) END;
+PROCEDURE Real*  (x: REAL; width, digits: INTEGER);
+BEGIN Texts.WriteReal(Texts.output, x, width, digits)
 END Real;
 
-PROCEDURE Ln;
-BEGIN Char(CR); Char(LF)
+PROCEDURE Ln*;
+BEGIN Texts.WriteLn(Texts.output)
 END Ln;
 
 END Out.

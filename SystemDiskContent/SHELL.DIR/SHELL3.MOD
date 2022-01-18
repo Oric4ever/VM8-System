@@ -1132,8 +1132,7 @@ END proc46;
 VAR i: CARDINAL;
 (* $[- *)
 BEGIN
-  showMenu := bootFlag;
-  bootFlag := FALSE;
+  showMenu := FALSE;
   REPEAT
     IF showMenu THEN
       Terminal.ClearScreen;

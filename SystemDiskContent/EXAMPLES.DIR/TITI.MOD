@@ -1,0 +1,19 @@
+MODULE TITI;
+
+PROCEDURE P;
+
+  PROCEDURE A;
+  BEGIN
+  END A;
+
+  PROCEDURE B;
+  BEGIN
+    A
+  END B;
+BEGIN
+  B
+END P;
+
+BEGIN
+  P
+END TITI.

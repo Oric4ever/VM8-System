@@ -1,0 +1,7 @@
+MODULE Toto;
+IMPORT Terminal,Out;
+VAR ch: CHAR;
+    i: INTEGER;
+BEGIN
+  FOR i:=1 TO 10 DO Terminal.ReadChar(ch); Out.Int(ORD(ch), 4) END
+END Toto.

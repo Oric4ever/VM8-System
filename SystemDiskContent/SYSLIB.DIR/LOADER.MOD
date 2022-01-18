@@ -40,11 +40,7 @@ TYPE FLAGS      = (OVERLAY, Z80, TOINIT, RECURSEFLAG);
                     END;
                   END;
 
-(* VAR libraries  [0352H]: ARRAY [0..MAXLIB-1] OF Name; *)
-
-VAR module1    [030CH]: ADDRESS;
-    callerTask [0308H]: PROCESS;
-    calledTask [030AH]: PROCESS;
+VAR module1    [010CH]: ADDRESS;
 
     unused      : CARDINAL; (* was public variable firstDrive, keep it in case *)
     nbLibs      : CARDINAL;

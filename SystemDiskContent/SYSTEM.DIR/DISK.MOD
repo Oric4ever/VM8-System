@@ -24,12 +24,6 @@ BEGIN
   params.offset := 0;
   params.count  := 512;
   BIOS(READSECT, ADR(params));
-(*
-  BIOS(DMAOFFSET,  buf);
-  BIOS(SETTRACK,   CARD(sector DIV 65536L));
-  BIOS(SETSECTOR,  CARD(sector MOD 65536L));
-  BIOS(READSECTOR, 0);
-*)
   IF IORESULT<>0 THEN RAISE DiskError END;
 END ReadSector;
 
@@ -41,14 +35,8 @@ BEGIN
   params.offset := 0;
   params.count  := 512;
   BIOS(WRITESECT, ADR(params));
-(*
-  BIOS(DMAOFFSET,   buf);
-  BIOS(SETTRACK,    CARD(sector DIV 65536L));
-  BIOS(SETSECTOR,   CARD(sector MOD 65536L));
-  BIOS(WRITESECTOR, 0);
-*)
   IF IORESULT<>0 THEN RAISE DiskError END;
 END WriteSector;
-  
+
 END DISK.
 

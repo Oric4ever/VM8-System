@@ -1,8 +1,14 @@
 MODULE ED;
 FROM Editor  IMPORT editPosition, Edit;
+FROM Terminal IMPORT WriteString, WriteLn;
 IMPORT ComLine;
 BEGIN
-  ComLine.PromptFor("File to edit: ", ComLine.inName);
+  IF ComLine.inName[0] = 0C THEN
+    ComLine.PromptFor("File to edit: ", ComLine.inName)
+  ELSE
+    Terminal.WriteString(ComLine.inName);
+    Terminal.WriteLn;
+  END;
   editPosition := 0;
   Edit;
 END ED.

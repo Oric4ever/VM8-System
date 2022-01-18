@@ -1,62 +1,33 @@
-MODULE Terminal;
+DEFINITION MODULE Terminal;
 
-CONST   clearEol* = 0; insertDelete* = 1; highlightNormal* = 2;
+PROCEDURE ReadChar(VAR ch: CHAR);
+PROCEDURE BusyRead(VAR ch: CHAR);
+PROCEDURE ReadAgain;
+PROCEDURE ReadLine(VAR s: ARRAY OF CHAR);
+PROCEDURE WriteChar(ch: CHAR);
+PROCEDURE WriteLn;
+PROCEDURE WriteString(s: ARRAY OF CHAR);
 
-VAR numRows*, numCols* : INTEGER;
-    available* : SET; (* of clearEol, insertDelete, highlightNormal *)
+VAR numRows, numCols : CARDINAL;
 
-PROCEDURE ReadChar*(VAR ch: CHAR);
-BEGIN END ReadChar;
+PROCEDURE ClearScreen;
+PROCEDURE GotoXY(col,row: CARDINAL);
+PROCEDURE InitScreen;
+PROCEDURE ExitScreen;
 
-PROCEDURE BusyRead*(VAR ch: CHAR);
-BEGIN END BusyRead;
+TYPE
+  SpecialOps = (clearEol, insertDelete, highlightNormal);
+  OpSet = SET OF SpecialOps;
 
-PROCEDURE ReadAgain*;
-BEGIN END ReadAgain;
+VAR available : OpSet;
 
-PROCEDURE ReadLine*(VAR s: ARRAY OF CHAR);
-BEGIN END ReadLine;
+PROCEDURE ClearToEOL;
+PROCEDURE InsertLine;
+PROCEDURE DeleteLine;
+PROCEDURE Highlight;
+PROCEDURE Normal;
 
-PROCEDURE WriteChar*(ch: CHAR);
-BEGIN END WriteChar;
-
-PROCEDURE WriteLn*;
-BEGIN END WriteLn;
-
-PROCEDURE WriteString*(s: ARRAY OF CHAR);
-BEGIN END WriteString;
-
-PROCEDURE ClearScreen*;
-BEGIN END ClearScreen;
-
-PROCEDURE GotoXY*(col,row: INTEGER);
-BEGIN END GotoXY;
-
-PROCEDURE InitScreen*;
-BEGIN END InitScreen;
-
-PROCEDURE ExitScreen*;
-BEGIN END ExitScreen;
-
-PROCEDURE ClearToEOL*;
-BEGIN END ClearToEOL;
-
-PROCEDURE InsertLine*;
-BEGIN END InsertLine;
-
-PROCEDURE DeleteLine*;
-BEGIN END DeleteLine;
-
-PROCEDURE Highlight*;
-BEGIN END Highlight;
-
-PROCEDURE Normal*;
-BEGIN END Normal*;
-
-(*
 PROCEDURE CursorOff;
 PROCEDURE CursorOn;
-PROCEDURE WriteCard(val: INTEGER);
-*)
 END Terminal.
 

@@ -1,0 +1,106 @@
+MODULE Adv10;
+IMPORT BigNum, Texts, Out;
+TYPE BigInt = BigNum.INT64;
+VAR t: Texts.TEXT;
+    line: ARRAY 150 OF CHAR;
+    index, corruptScore, nbIncomplete: INTEGER;
+    currentChar: CHAR;
+    total: LONGINT;
+    completionScore: BigInt;
+    completionScores: ARRAY 100 OF BigInt;
+    display: ARRAY 18 OF CHAR;
+
+PROCEDURE NextChar();
+BEGIN INC(index); currentChar := line[index]
+END NextChar;
+
+PROCEDURE CorruptionScore(c: CHAR): INTEGER;
+VAR score: INTEGER;
+BEGIN
+  score := 0;
+  CASE c OF
+  | ')': score := 3
+  | ']': score := 57
+  | '}': score := 1197
+  | '>': score := 25137
+  END;
+  RETURN score
+END CorruptionScore;
+
+PROCEDURE CompletionScore(c: CHAR): INTEGER;
+VAR score: INTEGER;
+BEGIN
+  score := 0;
+  CASE c OF
+  | ')': score := 1
+  | ']': score := 2
+  | '}': score := 3
+  | '>': score := 4
+  END;
+  RETURN score
+END CompletionScore;
+
+PROCEDURE IsOpening(char: CHAR): BOOLEAN;
+BEGIN RETURN (char = '(') OR (char = '[') OR (char = '{') OR (char = '<')
+END IsOpening;
+
+PROCEDURE ClosingChar(openingChar: CHAR): CHAR;
+BEGIN RETURN CHR(ORD(openingChar) + 1 + ORD(openingChar # '('))
+END ClosingChar;
+
+PROCEDURE CheckChunk(closingChar: CHAR);
+VAR charScore: BigInt;
+BEGIN
+  NextChar();
+  WHILE IsOpening(currentChar) DO
+    CheckChunk(ClosingChar(currentChar));
+    IF corruptScore = 0 THEN NextChar() END
+  END;
+  IF currentChar = 0X THEN (* missing closing char *)
+    BigNum.MulBy(completionScore, 5, completionScore);
+    BigNum.FromInt(CompletionScore(closingChar), charScore);
+    BigNum.Add(completionScore, charScore, completionScore);
+  ELSIF corruptScore = 0 THEN
+    IF currentChar # closingChar THEN corruptScore := CorruptionScore(currentChar) END
+  END;
+END CheckChunk;
+
+PROCEDURE CheckLine;
+BEGIN
+  index := 0; corruptScore := 0; BigNum.FromInt(0,completionScore);
+  CheckChunk(ClosingChar(line[0]))
+END CheckLine;
+
+PROCEDURE SortScores;
+VAR i, j, minIndex: INTEGER;
+    min: BigInt;
+    str: ARRAY 18 OF CHAR;
+BEGIN
+  FOR i:=0 TO nbIncomplete-1 DO
+    min := completionScores[i]; minIndex := i;
+    FOR j:=i+1 TO nbIncomplete-1 DO
+      IF BigNum.Before(completionScores[j], min) THEN
+        min := completionScores[j];
+        minIndex := j
+      END
+    END;
+    completionScores[minIndex] := completionScores[i];
+    completionScores[i] := min
+  END;
+END SortScores;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.10") );
+  WHILE NOT Texts.EOT(t) DO
+    Texts.ReadLine(t, line);
+    CheckLine;
+    IF corruptScore # 0 THEN total := total + LONG( corruptScore )
+    ELSE completionScores[nbIncomplete] := completionScore; INC(nbIncomplete)
+    END
+  END;
+  Out.String("Part A: "); Out.Long(total, 7); Out.Ln;
+
+  SortScores;
+  BigNum.ToString(completionScores[nbIncomplete DIV 2], display);
+  Out.String("Part B: "); Out.String(display); Out.Ln;
+END Adv10.

@@ -1,0 +1,74 @@
+MODULE Adv14;
+IMPORT Strings,Texts,Out;
+CONST letters = "BCFHKNOPSV";
+VAR t: Texts.TEXT;
+    n,m: INTEGER;
+    template: ARRAY 20000 OF CHAR;
+    num: ARRAY 26 OF INTEGER;
+    pair: ARRAY 2 OF CHAR;
+    rule: ARRAY 10,10 OF CHAR;
+    stats: ARRAY 10 OF INTEGER;
+
+PROCEDURE InitNumbers;
+VAR chars: ARRAY 12 OF CHAR;
+    i : INTEGER;
+BEGIN
+  chars := letters;
+  FOR i:=0 TO 9 DO num[ORD(chars[i])-ORD("A")] := i END
+END InitNumbers;
+
+PROCEDURE PartA(VAR str: ARRAY OF CHAR): INTEGER;
+VAR i: INTEGER;
+    min, max: INTEGER;
+BEGIN
+  i := 0;
+  WHILE template[i] # 0X DO
+    INC(stats[num[ORD(str[i]) - ORD('A')]]);
+    INC(i)
+  END;
+  min := 32767; max := 0;
+  FOR i:=0 TO 9 DO
+    IF stats[i] < min THEN min := stats[i] END;
+    IF stats[i] > max THEN max := stats[i] END;
+  END;
+  RETURN max - min
+END PartA;
+
+PROCEDURE Insertion(VAR str: ARRAY OF CHAR);
+VAR i,first,second: INTEGER;
+BEGIN
+  i := Strings.Length(str); str[i*2] := 0X;
+  REPEAT
+    DEC(i);
+    str[i*2] := str[i];
+    first  := num[ORD(str[i-1]) - ORD('A')];
+    second := num[ORD(str[i]) - ORD('A')];
+    str[i*2-1] := rule[first][second];
+  UNTIL i = 1
+END Insertion;
+
+PROCEDURE ReadRule(t: Texts.TEXT);
+VAR first, second: INTEGER;
+    pair: ARRAY 2 OF CHAR;
+BEGIN
+  Texts.ReadString(t, pair);
+  first  := num[ORD(pair[0]) - ORD('A')];
+  second := num[ORD(pair[1]) - ORD('A')];
+  Texts.ReadString(t, pair);
+  ASSERT( pair = "->" );
+  Texts.ReadString(t, pair);
+  rule[first][second] := pair[0];
+END ReadRule;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.14") );
+  Texts.ReadString(t, template);
+  InitNumbers;
+  FOR n:=1 TO 100 DO ReadRule(t) END;
+  FOR n:=0 TO 9 DO
+    FOR m:=0 TO 9 DO Out.Char(rule[n][m]) END; Out.Ln
+  END;
+
+  FOR n:=1 TO 2 DO Insertion(template) END;
+  Out.Int(PartA(template), 5);
+END Adv14.

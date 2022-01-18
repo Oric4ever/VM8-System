@@ -1,0 +1,108 @@
+MODULE Adv22;
+IMPORT Files, Texts, Out;
+CONST N = 420;
+TYPE Cuboid = RECORD
+                x1,x2,y1,y2,z1,z2: LONGINT;
+                on: BOOLEAN;
+               END;
+VAR t: Texts.TEXT;
+    f: Files.FILE;
+    cuboids: ARRAY N OF Cuboid;
+    i: INTEGER;
+
+PROCEDURE Low(x: LONGINT):INTEGER;
+VAR low: INTEGER;
+BEGIN
+  IF    x < LONG(-50) THEN low := -50
+  ELSIF x > LONG(+50) THEN low := +51
+  ELSE low := INT(x) END;
+  RETURN low
+END Low;
+
+PROCEDURE High(x: LONGINT):INTEGER;
+VAR high: INTEGER;
+BEGIN 
+  IF    x < LONG(-50) THEN high := -51
+  ELSIF x > LONG(+50) THEN high := +50
+  ELSE high := INT(x) END;
+  RETURN high
+END High;
+
+PROCEDURE ReadInterval(VAR low,hi: LONGINT);
+VAR c: CHAR;
+BEGIN
+  Texts.ReadChar(t, c);
+  Texts.ReadChar(t, c);
+  Texts.ReadChar(t, c); ASSERT( c = '=' );
+  Texts.ReadLong(t, low);
+  Texts.ReadChar(t, c);
+  Texts.ReadChar(t, c);
+  Texts.ReadLong(t, hi);
+END ReadInterval;
+
+PROCEDURE ReadCuboid(VAR cuboid: Cuboid);
+VAR str: ARRAY 4 OF CHAR;
+    c: CHAR;
+BEGIN
+  Texts.ReadString(t, str); Texts.ReadAgain(t);
+  cuboid.on := str = "on";
+  ReadInterval(cuboid.x1, cuboid.x2);
+  ReadInterval(cuboid.y1, cuboid.y2);
+  ReadInterval(cuboid.z1, cuboid.z2);
+END ReadCuboid;
+
+PROCEDURE In(x,y,z: INTEGER; cuboid: Cuboid): BOOLEAN;
+BEGIN
+  RETURN (LONG(x) >= cuboid.x1) & (LONG(x) <= cuboid.x2)
+       & (LONG(y) >= cuboid.y1) & (LONG(y) <= cuboid.y2)
+       & (LONG(z) >= cuboid.z1) & (LONG(z) <= cuboid.z2)
+END In;
+
+PROCEDURE InitFile;
+VAR x,y,z: INTEGER;
+BEGIN
+  Files.Create(f, "adv22.dat");
+  FOR x := -50 TO 50 DO
+   FOR y := -50 TO 50 DO
+    FOR z := -50 TO 50 DO Files.WriteByte(f, 0) END
+   END
+  END
+END InitFile;
+
+PROCEDURE SetCuboid(cuboid: Cuboid);
+VAR state: BYTE;
+    x,y,z,z1,z2: INTEGER;
+BEGIN
+  state := ORD(cuboid.on);
+  FOR x := Low(cuboid.x1) TO High(cuboid.x2) DO
+   FOR y := Low(cuboid.y1) TO High(cuboid.y2) DO
+    z1 := Low(cuboid.z1); z2 := High(cuboid.z2);
+    IF z1 <= z2 THEN
+      Files.SetPos(f, LONG((x+50)*101 + (y+50)) * LONG(101) + LONG(z1+50));
+      FOR z := z1 TO z2 DO Files.WriteByte(f, state) END
+    END
+   END
+  END
+END SetCuboid;
+
+PROCEDURE Count():LONGINT;
+VAR x,y,z: INTEGER;
+    count: LONGINT;
+    val  : BYTE;
+BEGIN
+  count := LONG(0);
+  Files.SetPos(f, LONG(0));
+  FOR x := -50 TO 50 DO
+   FOR y := -50 TO 50 DO
+    FOR z := -50 TO 50 DO Files.ReadByte(f, val); count := count + LONG(val) END
+   END
+  END;
+  RETURN count
+END Count;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.22") );
+  InitFile;
+  FOR i:=0 TO N-1 DO ReadCuboid(cuboids[i]); SetCuboid(cuboids[i]) END;
+  Out.Long(Count(), 8); Out.Ln;
+END Adv22.

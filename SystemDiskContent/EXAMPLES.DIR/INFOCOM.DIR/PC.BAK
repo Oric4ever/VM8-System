@@ -1,0 +1,93 @@
+IMPLEMENTATION MODULE PC; (* Program Counter *)
+FROM SYSTEM IMPORT BYTE, ADR;
+FROM Support IMPORT Store;
+IMPORT GameFile, Stack;
+
+CONST BLOCKSIZE = 512;
+TYPE Block = ARRAY [0..BLOCKSIZE-1] OF BYTE;
+
+VAR pcOffset       : CARDINAL;
+    pcPage         : CARDINAL;
+    cachedPageNum  : CARDINAL;
+    progBlock      : Block; (* used when not in resident area *)
+    progBlockPtr   : POINTER TO Block;
+
+PROCEDURE FixPC;
+VAR pc      : LONGINT;
+    newPage : CARDINAL;
+BEGIN
+  pc       := LONG(pcPage) * LONG(BLOCKSIZE) + LONG(INTEGER(pcOffset));
+  pcOffset := CARD(pc MOD LONG(BLOCKSIZE));
+  newPage  := CARD(pc DIV LONG(BLOCKSIZE));
+  IF newPage # pcPage THEN
+    pcPage := newPage;
+    IF pcPage < GameFile.residentBlocks THEN
+      progBlockPtr := GameFile.basePtr + pcPage * BLOCKSIZE
+    ELSE
+      progBlockPtr := ADR(progBlock);
+      IF pcPage # cachedPageNum THEN
+        cachedPageNum := pcPage;
+        GameFile.LoadPages(pcPage, 1, progBlockPtr);
+      END;
+    END;
+  END;
+END FixPC;
+
+PROCEDURE NextByte(): CARDINAL;
+VAR byte: CARDINAL;
+BEGIN
+  byte := ORD(progBlockPtr^[pcOffset]);
+  INC(pcOffset); IF pcOffset = BLOCKSIZE THEN FixPC END;
+  RETURN byte
+END NextByte;
+
+PROCEDURE NextWord(): CARDINAL;
+BEGIN
+  RETURN NextByte() * 256 + NextByte()
+END NextWord;
+
+PROCEDURE Gosub(nbParams: CARDINAL; VAR params: ARRAY OF WORD);
+VAR destination, nbLocalVars, i, dummy: CARDINAL;
+BEGIN
+  destination := CARDINAL(params[0]);
+  IF destination = 0 THEN Store(destination)
+  ELSE
+    Stack.Push(pcPage);
+    Stack.Push(pcOffset);
+    pcPage   := destination DIV 256; (* word address *)
+    pcOffset := destination MOD 256 * 2;
+    FixPC;
+
+    nbLocalVars := NextByte();
+    Stack.BuildFrame(nbLocalVars);
+    FOR i:=1 TO nbParams-1 DO (* skip first param which is destination *)
+      Stack.SetLocal(i, params[i]);
+      dummy := NextWord();  (* ignore procedure's default value *)
+    END;
+    FOR i:=nbParams TO nbLocalVars DO (* initialise with procedure's default values *)
+      Stack.SetLocal(i, NextWord())
+    END;
+  END;
+END Gosub;
+
+PROCEDURE Rtn  (val: WORD);
+BEGIN
+  Stack.DeleteFrame;
+  pcOffset := Stack.Pull();
+  pcPage   := Stack.Pull();
+  FixPC;
+  Store(val);
+END Rtn;
+
+PROCEDURE Jump (offset: CARDINAL);
+BEGIN
+  INC(pcOffset, offset-2);
+  FixPC;
+END Jump;
+
+PROCEDURE Rts;
+BEGIN
+  Rtn( Stack.Pull() )
+END Rts;
+
+END PC.

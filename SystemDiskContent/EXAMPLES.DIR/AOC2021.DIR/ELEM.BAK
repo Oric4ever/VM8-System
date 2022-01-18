@@ -1,0 +1,8 @@
+MODULE Elem;
+TYPE Type* = RECORD x,y: BYTE END;
+
+PROCEDURE Equals*(a, b: Type): BOOLEAN;
+BEGIN RETURN (a.x = b.x) & (a.y = b.y)
+END Equals;
+
+END Elem.

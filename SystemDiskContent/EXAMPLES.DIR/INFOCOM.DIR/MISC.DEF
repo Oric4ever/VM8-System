@@ -1,0 +1,8 @@
+DEFINITION MODULE Misc;
+
+PROCEDURE Loadw(base,offset: CARDINAL);
+PROCEDURE Loadb(base,offset: CARDINAL);
+PROCEDURE Savew(base,offset,value: CARDINAL);
+PROCEDURE Saveb(base,offset,value: CARDINAL);
+
+END Misc.

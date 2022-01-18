@@ -1,0 +1,288 @@
+MODULE FAT32;
+(*
+  Minimal FAT32 filesystem handling:
+    - no partitions: FAT32 filesystem occupies full disk
+    - assumes 2 FATs
+
+  F.Frances 2020-2021
+*)
+IMPORT Disk, SYSTEM;
+
+CONST
+    (* FAT32-related constants *)
+    FREECLUSTER = 0; FIRSTCLUSTER = 2;
+    FATENTRIESPERSECTOR = 128;
+    BOOTSECTOR = 0; FSINFOSECTOR = 1;
+
+TYPE
+    Cluster* = Disk.LBA;
+
+    BootSectorDesc = RECORD
+   (*  00 *)  BootJmp: ARRAY 3 OF BYTE;
+   (*  03 *)  OEMname: ARRAY 8 OF CHAR;
+   (* old DOS 2.0 Bios Parameter Block (BPB): *)
+   (*  0B *)  BytesPerSector: INTEGER;
+   (*  0D *)  SectorsPerCluster: BYTE;
+   (*  0E *)  ReservedSectors: INTEGER;
+   (*  10 *)  NumberOfFATs: BYTE;
+   (*  11 *)  FAT16nbRootEntries: INTEGER;
+   (*  13 *)  FAT16nbLogicalSectors: INTEGER;
+   (*  15 *)  MediaDescriptor: BYTE;
+   (*  16 *)  FAT16sectorsPerFAT: INTEGER;
+   (* DOS 3.31 BPB : *)
+   (*  18 *)  SectorsPerTrack: INTEGER; (* for INT13H *)
+   (*  1A *)  Heads: INTEGER;           (* for INT13H *)
+   (*  1C *)  HiddenSectors: LONGINT;
+   (*  20 *)  TotalSectors: LONGINT; (* if greater than 65535 *)
+   (* FAT32 Extended BPB : *)
+   (*  24 *)  SectorsPerFAT: LONGINT;
+   (*  28 *)  MirroringFlags: SET;
+   (*  2A *)  Version: INTEGER;
+   (*  2C *)  FirstRootCluster: Cluster;
+   (*  30 *)  FSinfoSector: INTEGER;
+   (*  32 *)  BootSectorsBackup: INTEGER;
+   (*  34 *)  MiscBytes2 : ARRAY  30 OF BYTE;
+   (*  52 *)  FileSysType: ARRAY   8 OF CHAR;
+   (*  5A *)  MiscBytes3 : ARRAY 420 OF BYTE;
+   (* 1FE *)  BootSignature: INTEGER;
+            END;
+    BootSector = POINTER TO BootSectorDesc;
+
+    FSinfoDesc = RECORD
+   (*  00 *)  FSInfoSignature : LONGINT;
+   (*  04 *)  reserved : ARRAY 480 OF BYTE;
+   (* 1E4 *)  FSInfoSignature2 : LONGINT;
+   (* 1E8 *)  nbFreeDataCluster: LONGINT;
+   (* 1EC *)  lastAllocatedCluster: Cluster;
+   (* 1F0 *)  reserved2: ARRAY 12 OF BYTE;
+   (* 1FC *)  FSInfoSignature3: LONGINT;
+                 END;
+    InfoSector = POINTER TO FSinfoDesc;
+
+    FATsectorDesc = RECORD
+                     fat : ARRAY 128 OF Cluster
+                    END;
+    FATsector = POINTER TO FATsectorDesc;
+
+VAR firstRootCluster*, endCluster*: Cluster;
+(* a single sector buffer for filesystem operations (BOOT, FSINFO, FAT, DIR) *)
+    bufferFS*        : Disk.Sector;
+    bootSector       : POINTER TO BootSectorDesc;   (* will point to bufferFS *)
+    infoSector       : POINTER TO FSinfoDesc;       (* will point to bufferFS *)
+    FATBuffer        : POINTER TO FATsectorDesc;    (* will point to bufferFS *)
+
+(* constant variables initialized from Bios Parameter Block *)
+    sectorsPerCluster: INTEGER;
+    fragmentMask     : SET;      (* mask avoids MOD sectorsPerCluster *)
+
+
+    FATregion        : Disk.LBA;    (* first sector of FAT *)
+    sectorsPerFAT    : Disk.LBA;    (* nb of sectors per FAT *)
+    dataRegion       : Disk.LBA;    (* first sector of data *)
+    clusterOrigin    : Disk.LBA;    (* sector of cluster #0 (cluster numbers start at #2) *)
+    ENDOFCHAIN       : Disk.LBA;    (* special cluster value for end of cluster chain *)
+
+(* variable read from FSInfo sector *)
+    lastAllocatedCluster: Cluster;
+
+(* status of sector buffer *)
+    currentSector    : Disk.LBA;
+    sectorDirty      : BOOLEAN;
+
+
+(********************************************************************)
+(* Low-level sector routines                                        *)
+
+PROCEDURE WriteFS*;
+BEGIN
+  Disk.WriteSector(currentSector, bufferFS);
+  sectorDirty := FALSE;
+  IF (currentSector < dataRegion) & (currentSector >= FATregion) THEN
+    (* assume sector is in first FAT, update second FAT too *)
+    Disk.WriteSector(currentSector+sectorsPerFAT, bufferFS);
+  END
+END WriteFS;
+
+PROCEDURE ReadFS*(sector: Disk.LBA);
+BEGIN
+  IF sector # currentSector THEN
+    IF sectorDirty THEN WriteFS END;
+    Disk.ReadSector(sector, bufferFS);
+    currentSector := sector;
+  END
+END ReadFS;
+
+(* Internal FileSystem call. Should only be called by the Kernel *)
+PROCEDURE InitFS*;
+CONST FAT32SIG = "FAT32   ";
+VAR totalSectors: Disk.LBA;
+BEGIN
+  ENDOFCHAIN := LONG(0FFFH, 0FFFFH); (* 0FFFFFFF *)
+  bootSector := SYSTEM.VAL(BootSector, SYSTEM.ADR(bufferFS));
+  infoSector := SYSTEM.VAL(InfoSector, SYSTEM.ADR(bufferFS));
+  FATBuffer  := SYSTEM.VAL(FATsector,  SYSTEM.ADR(bufferFS));
+
+  currentSector := LONG(FSINFOSECTOR); (* to be sure ReadFS will read boot sector *)
+  sectorDirty   := FALSE;              (* ... without writing anything to FSinfoSector *)
+  ReadFS(LONG(BOOTSECTOR));
+  
+(*  ASSERT(bootSector.BootSignature = 0AA55H); *)
+  ASSERT(bootSector.FileSysType   = FAT32SIG);
+  ASSERT(bootSector.NumberOfFATs = 2);
+  sectorsPerCluster:= bootSector.SectorsPerCluster;
+  FATregion        := LONG(bootSector.ReservedSectors);
+  totalSectors     := bootSector.TotalSectors;
+  sectorsPerFAT    := bootSector.SectorsPerFAT;
+  firstRootCluster := bootSector.FirstRootCluster;
+  dataRegion       := FATregion + sectorsPerFAT + sectorsPerFAT;
+  clusterOrigin    := dataRegion - LONG(FIRSTCLUSTER * sectorsPerCluster);
+  endCluster       := (totalSectors-dataRegion) DIV LONG(sectorsPerCluster);
+  fragmentMask     := SYSTEM.VAL(SET, sectorsPerCluster - 1);
+
+  ReadFS(LONG(FSINFOSECTOR));
+  lastAllocatedCluster:= infoSector.lastAllocatedCluster;
+  IF lastAllocatedCluster < LONG(FIRSTCLUSTER) THEN
+    lastAllocatedCluster := LONG(FIRSTCLUSTER)
+  END;
+END InitFS;
+
+PROCEDURE UnmountFS*;
+BEGIN
+  ReadFS(LONG(FSINFOSECTOR));
+  infoSector.lastAllocatedCluster := lastAllocatedCluster;
+  WriteFS;
+END UnmountFS;
+
+PROCEDURE SyncFS*;
+BEGIN
+  IF sectorDirty THEN WriteFS END
+END SyncFS;
+
+(**************************************************************************)
+(* clusters operations                                                    *)
+
+PROCEDURE ClusterToLBA*(cluster: Cluster): Disk.LBA;
+BEGIN
+  RETURN clusterOrigin + cluster * LONG(sectorsPerCluster)
+  (* TODO: define ASL to avoid the long multiplication
+    RETURN clusterOrigin + ASL(cluster, clusterShift)
+   *)
+END ClusterToLBA;
+
+PROCEDURE Fragment*(lba: Disk.LBA): INTEGER;
+BEGIN
+  RETURN SYSTEM.VAL(INTEGER, SYSTEM.VAL(SET, LSW(lba)) * fragmentMask)
+  (* TODO: define ASR for easier handling:
+     RETURN ASR(LSW(lba), clusterShift)
+   *)
+END Fragment;
+
+PROCEDURE ReadFragment*(cluster: Cluster; fragment: INTEGER; VAR buf: Disk.Sector);
+BEGIN
+  Disk.ReadSector(ClusterToLBA(cluster) + LONG(fragment), buf);
+END ReadFragment;
+
+PROCEDURE WriteFragment*(cluster: Cluster; fragment: INTEGER; buf: Disk.Sector);
+BEGIN
+  Disk.WriteSector(ClusterToLBA(cluster) + LONG(fragment), buf);
+END WriteFragment;
+
+(* FAT-related routines *)
+
+PROCEDURE GetFATentry*(cluster: Cluster): Cluster;
+BEGIN
+  ASSERT( (cluster >= LONG(FIRSTCLUSTER)) & (cluster <= endCluster) );
+  ReadFS(FATregion + cluster DIV LONG(FATENTRIESPERSECTOR));
+(* TODO: ASR 7 *)
+  RETURN FATBuffer.fat[INT(cluster MOD LONG(FATENTRIESPERSECTOR))]
+(* TODO: AND 127 *)
+END GetFATentry;
+
+PROCEDURE PutFATentry*(cluster, next: Cluster);
+BEGIN
+  ASSERT( (cluster >= LONG(FIRSTCLUSTER)) & (cluster <= endCluster) );
+  ReadFS(FATregion + cluster DIV LONG(FATENTRIESPERSECTOR));
+  FATBuffer.fat[INT(cluster MOD LONG(FATENTRIESPERSECTOR))] := next;
+  sectorDirty := TRUE
+END PutFATentry;
+
+PROCEDURE DeleteChain*(cluster: Cluster);
+VAR next: Cluster;
+BEGIN
+  WHILE (cluster <= endCluster) & (cluster # LONG(FREECLUSTER)) DO
+    next := GetFATentry(cluster);
+    PutFATentry(cluster,LONG(FREECLUSTER));
+    cluster := next;
+  END;
+  WriteFS;
+END DeleteChain;
+
+PROCEDURE FindFreeCluster*(): Cluster;
+VAR cluster: Cluster;
+BEGIN
+  cluster := lastAllocatedCluster;
+  REPEAT
+    cluster := cluster + LONG(1);
+    IF cluster > endCluster THEN cluster := LONG(FIRSTCLUSTER) END;
+    ASSERT(cluster # lastAllocatedCluster); (* full loop => no free cluster *)
+  UNTIL GetFATentry(cluster) = LONG(FREECLUSTER);
+  PutFATentry(cluster,ENDOFCHAIN);
+  lastAllocatedCluster := cluster;
+  RETURN cluster
+END FindFreeCluster;
+
+PROCEDURE NextSector*(VAR cluster: Cluster; VAR sector: Disk.LBA; extendChain: BOOLEAN): BOOLEAN;
+VAR next: Cluster;
+    sameCluster : BOOLEAN;
+BEGIN
+  sector := sector + LONG(1);
+  sameCluster := Fragment(sector) # 0;
+  IF NOT sameCluster THEN
+    next := GetFATentry(cluster);
+    IF next > endCluster THEN
+      IF extendChain THEN
+        next := FindFreeCluster();
+        PutFATentry(cluster, next);
+      END
+    END;
+    cluster := next
+  END;
+  RETURN sameCluster OR (cluster <= endCluster)
+END NextSector;
+
+(* Follows a chain of clusters,
+   updates cluster and sector, and extends the chain of clusters if reaching its end.
+   Raises DiskError if the number of clusters to skip exceeds the file's number of clusters.
+ *)
+PROCEDURE SkipSectors*(VAR cluster: Cluster; VAR sector: Disk.LBA; nbSectors: LONGINT);
+VAR clustersToSkip: LONGINT;
+    previous : Cluster;
+    remainingFragments : LONGINT;
+    sectorsPerClusterL : LONGINT;
+BEGIN
+  remainingFragments := LONG(sectorsPerCluster - Fragment(sector));
+  IF nbSectors >= remainingFragments THEN (* advance to next Cluster *)
+    sector    := sector    + remainingFragments;
+    nbSectors := nbSectors - remainingFragments;
+    previous  := cluster;
+    cluster   := GetFATentry(previous);
+    sectorsPerClusterL := LONG(sectorsPerCluster);
+    WHILE nbSectors >= sectorsPerClusterL DO
+      previous  := cluster;
+      cluster   := GetFATentry(previous); (* raises DiskError when trying to go after end of chain *)
+      nbSectors := nbSectors - sectorsPerClusterL;
+      sector    := sector    + sectorsPerClusterL;
+    END;
+    IF cluster > endCluster THEN
+      (* cluster is absent, only allocate one if final sector reached *)
+      ASSERT( nbSectors = LONG(0) );
+      cluster := FindFreeCluster();
+      PutFATentry(previous, cluster);
+    END
+  END;
+  sector := sector + nbSectors;
+END SkipSectors;
+
+BEGIN
+  InitFS;
+END FAT32.

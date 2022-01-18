@@ -1,0 +1,110 @@
+MODULE Adv05;
+IMPORT Files, Texts, Out;
+CONST MAX = 999; (* max coordinate value *)
+      N = 500;   (* number of lines *)
+TYPE Line = ARRAY MAX+1 OF BYTE;
+VAR t: Texts.TEXT;
+    map: Files.FILE;
+    i: INTEGER;
+
+PROCEDURE Swap(VAR a,b: INTEGER);
+VAR tmp: INTEGER;
+BEGIN
+  tmp := a; a := b; b := tmp
+END Swap;
+
+PROCEDURE InitMap;
+VAR line: Line;
+    i,j: INTEGER;
+BEGIN
+  Files.Create(map, "map.dat"); (* it will be a 1M file *)
+  FOR i:=0 TO MAX DO
+    FOR j:= 0 TO MAX DO Files.WriteByte(map, 0) END
+  END
+END InitMap;
+
+PROCEDURE ReadCoordinates(VAR x1,y1,x2,y2: INTEGER);
+VAR separator: CHAR;
+    arrow: ARRAY 2 OF CHAR;
+BEGIN
+  Texts.ReadInt(t, x1); Texts.ReadChar(t, separator); Texts.ReadInt(t, y1);
+  Texts.ReadString(t, arrow);
+  Texts.ReadInt(t, x2); Texts.ReadChar(t, separator); Texts.ReadInt(t, y2);
+END ReadCoordinates;
+
+PROCEDURE AddPoint(x,y: INTEGER);
+VAR pos: LONGINT;
+    value: BYTE;
+BEGIN
+  pos := LONG(y)*LONG(1000)+LONG(x);
+  Files.SetPos  (map, pos);
+  Files.ReadByte(map, value);
+  INC(value);
+  Files.SetPos   (map, pos);
+  Files.WriteByte(map, value);
+END AddPoint;
+
+PROCEDURE ReadLines;
+VAR n,x1,y1,x2,y2,x,y: INTEGER;
+    line: Line;
+    pos: LONGINT;
+BEGIN
+  FOR n:=1 TO N DO
+    ReadCoordinates(x1,y1,x2,y2);
+    IF    x1 = x2 THEN (* vertical *)
+      IF y1 > y2 THEN Swap(y1,y2) END;
+      FOR y := y1 TO y2 DO AddPoint(x1, y) END;
+    ELSIF y1 = y2 THEN (* horizontal *)
+      IF x1 > x2 THEN Swap(x1,x2) END;
+      FOR x := x1 TO x2 DO AddPoint(x, y1) END;
+    END
+  END
+END ReadLines;
+
+PROCEDURE ReadDiagonals;
+VAR n,x1,y1,x2,y2,x,y,dx: INTEGER;
+    line: Line;
+    pos: LONGINT;
+BEGIN
+  FOR n:=1 TO 500 DO
+    ReadCoordinates(x1,y1,x2,y2);
+    IF (x1 # x2) AND (y1 # y2) THEN
+      IF y1 > y2 THEN Swap(y1,y2); Swap(x1,x2) END;
+      IF x1 > x2 THEN dx := -1 ELSE dx := +1 END;
+      x := x1;
+      FOR y := y1 TO y2 DO AddPoint(x, y); x := x + dx END;
+    END
+  END
+END ReadDiagonals;
+
+PROCEDURE CountMap(): INTEGER;
+VAR x,y,value,count: INTEGER;
+    line: Line;
+BEGIN
+  count := 0;
+  Files.SetPos(map, LONG(0));
+  FOR y:=0 TO MAX DO
+    FOR x:=0 TO MAX DO
+      Files.ReadByte(map, value);
+      IF value > 1 THEN INC(count) END
+    END
+  END;
+  RETURN count
+END CountMap;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.05") );
+  InitMap;
+  ReadLines;
+  Texts.CloseText(t);
+  Out.String("Part A: ");
+  Out.Card( CountMap(), 5);
+  Out.Ln;
+
+  ASSERT( Texts.OpenText(t, "input.05") );
+  ReadDiagonals;
+  Out.String("Part B: ");
+  Out.Card( CountMap(), 5);
+  Out.Ln;
+END Adv05.
+

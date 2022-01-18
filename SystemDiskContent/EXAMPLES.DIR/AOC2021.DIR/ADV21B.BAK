@@ -1,0 +1,126 @@
+MODULE Adv21b;
+IMPORT Files, BigNum, Out;
+CONST Start1 = 4; Start2 = 8;
+      IntSize = 8;
+TYPE BigInt = BigNum.INT64;
+     QuantumPos = ARRAY 21,10 OF BigInt;
+
+VAR zero: QuantumPos;
+    file1, file2: Files.FILE;
+    wins1, wins2: BigInt;
+    i: INTEGER;
+    diceCounts: ARRAY 10 OF INTEGER;
+    str: ARRAY 18 OF CHAR;
+
+PROCEDURE ReadBigInt(f:Files.FILE; sc1,p1,sc2,p2: INTEGER; VAR nb: BigInt);
+VAR i: INTEGER;
+BEGIN
+  Files.SetPos(f, LONG(sc1 * 10 + p1) * LONG(21*10*IntSize)
+                + LONG((sc2 * 10 + p2) * IntSize));
+  FOR i:=0 TO LEN(nb)-1 DO Files.ReadByte(f, nb[i]) END
+END ReadBigInt;
+
+PROCEDURE PrintPos(quantumPos: QuantumPos);
+VAR sc,p: INTEGER;
+BEGIN
+  FOR sc:=0 TO 20 DO
+    FOR p:=0 TO 9 DO Out.Int(quantumPos[sc][p][0] + quantumPos[sc][p][1]*256, 6) END; Out.Ln
+  END
+END PrintPos;
+
+PROCEDURE WriteQuantumPos(f: Files.FILE; quantumPos: QuantumPos);
+VAR p, sc, i: INTEGER;
+BEGIN
+  FOR sc := 0 TO 20 DO
+   FOR p := 0 TO 9 DO
+    FOR i := 0 TO IntSize-1 DO Files.WriteByte(f, quantumPos[sc][p][i]) END
+   END
+  END
+END WriteQuantumPos;
+
+PROCEDURE PlayerMove(file1, file2: Files.FILE; VAR wins: BigInt);
+VAR quantumPos: QuantumPos;
+    nbx: ARRAY 8 OF BigInt;
+    p, p1, p2, sc, sc1, sc2, i: INTEGER;
+BEGIN
+  Files.SetPos(file2, LONG(0));
+  FOR sc2 := 0 TO 20 DO
+   FOR p2 := 0 TO 9 DO
+    quantumPos := zero;
+    FOR sc1 := 0 TO 20 DO
+     FOR p1 := 0 TO 9 DO
+      ReadBigInt(file1, sc1, p1, sc2, p2, nbx[1]);
+      BigNum.Add(nbx[1], nbx[1], nbx[2]); BigNum.Add(nbx[2], nbx[1], nbx[3]);
+      BigNum.Add(nbx[3], nbx[3], nbx[6]); BigNum.Add(nbx[6], nbx[1], nbx[7]);
+
+      p := p1 + 3; IF p > 9 THEN p := p - 10 END;
+      FOR i := 3 TO 9 DO
+        sc := sc1 + p + 1;
+        IF sc > 20
+        THEN BigNum.Add(wins, nbx[diceCounts[i]], wins)
+        ELSE BigNum.Add(quantumPos[sc][p], nbx[diceCounts[i]], quantumPos[sc][p])
+        END;
+        INC(p); IF p = 10 THEN p := 0 END
+      END
+     END
+    END;
+    WriteQuantumPos(file2, quantumPos);
+(*
+    IF (sc2 = 7) & (p2 = Start1-1+3) THEN
+      Out.Int(sc2, 3); Out.Int(p2, 3); Out.Ln;
+      PrintPos(quantumPos); Out.Ln;
+    END
+*)
+   END
+  END
+END PlayerMove;
+
+PROCEDURE Check(file: Files.FILE);
+VAR quantumPos: QuantumPos;
+    sc,p1,p2,i : INTEGER;
+    byte: BYTE;
+BEGIN
+  Files.SetPos(file, LONG(0));
+  FOR p2 := 0 TO 9 DO
+    FOR sc := 0 TO 20 DO
+      FOR p1 := 0 TO 9 DO
+        FOR i:= 0 TO 7 DO Files.ReadByte(file, byte); ASSERT(byte = 0) END
+      END
+    END
+  END
+END Check;
+
+PROCEDURE InitFile(f: Files.FILE);
+VAR sc,p: INTEGER;
+    quantumPos: QuantumPos;
+BEGIN
+  quantumPos := zero;
+  BigNum.FromInt(1, quantumPos[0][Start2-1]);
+  FOR sc:=0 TO 20 DO
+    FOR p:=0 TO 9 DO
+      IF (sc = 0) & (p = Start1-1)
+      THEN WriteQuantumPos(f, quantumPos)
+      ELSE WriteQuantumPos(f, zero)
+      END
+    END
+  END
+END InitFile;
+
+BEGIN
+  diceCounts[3] := 1; diceCounts[4] := 3; diceCounts[5] := 6; diceCounts[6] := 7;
+  diceCounts[7] := 6; diceCounts[8] := 3; diceCounts[9] := 1;
+  Files.Create(file1, "quantum1.dat");
+  Files.Create(file2, "quantum2.dat");
+  InitFile(file1);
+
+  FOR i:=1 TO 20 DO
+    Out.String("Move #"); Out.Int(i,2); Out.Ln;
+    PlayerMove(file1, file2, wins1);
+    PlayerMove(file2, file1, wins2);
+  END;
+
+  Check(file1);
+  BigNum.ToString(wins1, str); Out.String(str); Out.Ln;
+  BigNum.ToString(wins2, str); Out.String(str); Out.Ln;
+
+END Adv21b.

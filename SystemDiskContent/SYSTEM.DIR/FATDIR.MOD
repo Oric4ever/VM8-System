@@ -1,6 +1,5 @@
 IMPLEMENTATION MODULE FATDIR;
-FROM SYSTEM IMPORT ADR,WORD,BYTE,IORESULT,FILL;
-IMPORT Disk;
+FROM SYSTEM IMPORT ADR,WORD,BYTE,FILL;
 FROM NEWFAT32 IMPORT ReadFS, WriteFS, bufferFS, ClusterToLBA, NextSector, firstRootCluster,
                      WriteFragment, FindFreeCluster, PutFATentry, DeleteChain;
 (*

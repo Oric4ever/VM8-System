@@ -80,6 +80,8 @@ VAR sectorsPerCluster: CARDINAL;
     currentSector    : LBA;
     sectorDirty      : BOOLEAN;
 
+EXCEPTION DiskError;
+
 (********************************************************************)
 (* Low-level sector routines                                        *)
 
@@ -135,14 +137,14 @@ END WriteFragment;
 
 PROCEDURE GetFATentry(cluster: Cluster): Cluster;
 BEGIN
-  IF (cluster<LONG(FIRSTCLUSTER)) OR (cluster>endCluster) THEN RAISE Disk.DiskError END;
+  IF (cluster<LONG(FIRSTCLUSTER)) OR (cluster>endCluster) THEN RAISE DiskError END;
   ReadFS(FATregion + cluster DIV CLUSTERSPERSECTOR);
   RETURN buffer.fat[CARD(cluster MOD CLUSTERSPERSECTOR)]
 END GetFATentry;
 
 PROCEDURE PutFATentry(cluster, next: Cluster);
 BEGIN
-  IF (cluster<LONG(FIRSTCLUSTER)) OR (cluster>endCluster) THEN RAISE Disk.DiskError END;
+  IF (cluster<LONG(FIRSTCLUSTER)) OR (cluster>endCluster) THEN RAISE DiskError END;
   ReadFS(FATregion + cluster DIV CLUSTERSPERSECTOR);
   buffer.fat[CARD(cluster MOD CLUSTERSPERSECTOR)] := next;
   sectorDirty := TRUE
@@ -172,7 +174,7 @@ BEGIN
       RETURN cluster
     END;
   UNTIL cluster = lastAllocatedCluster; (* full loop => no free cluster *)
-  RAISE Disk.DiskError
+  RAISE DiskError
 END FindFreeCluster;
 
 PROCEDURE NextSector(VAR cluster: Cluster; VAR sector: LBA; extendChain: BOOLEAN): BOOLEAN;
@@ -218,7 +220,7 @@ BEGIN
     sector    := sector    + sectorsPerClusterL;
   END;
   IF cluster > endCluster THEN (* cluster is absent, only allocate one if final sector reached *)
-    IF nbSectors <> LONG(0) THEN RAISE Disk.DiskError END;
+    IF nbSectors <> LONG(0) THEN RAISE DiskError END;
     cluster := FindFreeCluster();
     PutFATentry(previous, cluster);
   END;
@@ -238,7 +240,7 @@ BEGIN
     IF (BootSignature <> 0AA55H)
     OR (FileSysType   <> FAT32SIG)
     OR (numberOfFATs  <> 2) THEN
-      RAISE Disk.DiskError
+      RAISE DiskError
     END;
     sectorsPerCluster:= ORD(FirstBytes[0DH]);
     FATregion        := LONG(ReservedSectors);
@@ -269,4 +271,4 @@ END UnmountFS;
 
 BEGIN
   InitFS
-END NEWFAT32.                                                                         
+END NEWFAT32.

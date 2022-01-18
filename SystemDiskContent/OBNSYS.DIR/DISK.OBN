@@ -1,0 +1,41 @@
+MODULE DISK;
+IMPORT SYSTEM;
+
+CONST
+    (* SYSTEM.SYS functions *)
+    READSECT=4; WRITESECT=5;
+
+TYPE
+    LBA* = LONGINT;
+    Sector* = RECORD data: ARRAY 512 OF BYTE END;
+    DiskParams =  RECORD
+                    sector : LBA;
+                    dmaAdr : INTEGER;
+                    offset : INTEGER;
+                    count  : INTEGER;
+                  END;
+(********************************************************************)
+(* Low-level sector routines                                        *)
+
+PROCEDURE ReadSector*(sectorNum: LBA; VAR buffer: Sector);
+VAR params: DiskParams;
+BEGIN
+  params.sector := sectorNum;
+  params.dmaAdr := SYSTEM.ADR(buffer);
+  params.offset := 0;
+  params.count  := 512;
+  ASSERT( SYSTEM.SYS(READSECT, params) = 0 );
+END ReadSector;
+
+PROCEDURE WriteSector*(sectorNum: LBA; buffer: Sector);
+VAR params: DiskParams;
+BEGIN
+  params.sector := sectorNum;
+  params.dmaAdr := SYSTEM.ADR(buffer);
+  params.offset := 0;
+  params.count  := 512;
+  ASSERT( SYSTEM.SYS(WRITESECT, params) = 0 );
+END WriteSector;
+  
+END DISK.
+

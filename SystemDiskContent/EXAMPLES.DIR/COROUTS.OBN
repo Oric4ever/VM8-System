@@ -1,0 +1,16 @@
+MODULE Corouts;
+IMPORT Out, Coroutines;
+
+VAR A, Main: Coroutines.Coroutine;
+
+PROCEDURE APROC;
+BEGIN
+  Out.String("A is running"); Out.Ln;
+  Coroutines.Transfer(A, Main)
+END APROC;
+
+BEGIN
+  Coroutines.Init(APROC, 2048, A);
+  Coroutines.Transfer(Main, A);
+  Out.String("Main is running again"); Out.Ln;
+END Corouts.

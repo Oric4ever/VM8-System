@@ -1,0 +1,10 @@
+DEFINITION MODULE Print;
+
+PROCEDURE NewLine;
+PROCEDURE PrintZ    (VAR page, offset: CARDINAL);
+PROCEDURE PrintAddr (addr : CARDINAL);
+PROCEDURE PrintPAddr(paddr: CARDINAL);
+PROCEDURE PrintChar (char : CHAR);
+PROCEDURE PrintNum  (value: INTEGER);
+
+END Print.

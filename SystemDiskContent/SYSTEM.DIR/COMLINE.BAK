@@ -1,0 +1,90 @@
+IMPLEMENTATION MODULE ComLine;
+FROM Terminal IMPORT WriteString, WriteLn, ReadLine;
+IMPORT Texts;
+FROM Loader   IMPORT Call, LoadError;
+FROM EditPos  IMPORT editPos;
+(* comment the following two lines to not link with editor and compiler *)
+FROM Editor   IMPORT Edit;
+FROM Scanner  IMPORT compilerOptions;
+
+(* comment the following three lines to not link with ObnScan and ObnSymb *)
+FROM OScanner IMPORT Ident;
+FROM OSymTab  IMPORT universe;
+FROM ObnGen1  IMPORT Item;
+
+IMPORT Excepts;
+
+VAR index : CARDINAL;
+
+PROCEDURE RunModule;
+BEGIN
+  Call(progName)
+EXCEPTION
+| LoadError :
+  WriteString(progName);
+  WriteString(" not loaded.");
+  WriteLn;
+END RunModule;
+
+PROCEDURE textDriver(text: TEXT; VAR ch: CHAR);
+CONST EOF = 032C;
+BEGIN
+  IF (ORD(commandBuffer[index]) - ORD('<')) IN {0,2} THEN
+    REPEAT INC(index) UNTIL commandBuffer[index]<=' '
+  END;
+  ch := commandBuffer[index];
+  IF ch = 0C THEN ch := EOF ELSE INC(index) END;
+END textDriver;
+
+PROCEDURE Chain(prog,args,inRedirect,outRedirect: ARRAY OF CHAR);
+BEGIN
+  progName      := prog;
+    inName      := inRedirect;
+   outName      := outRedirect;
+  commandBuffer := args;
+  execute       := 1;
+END Chain;
+
+EXCEPTION NoInputFile;
+
+PROCEDURE RedirectInput;
+BEGIN
+  IF NOT Texts.OpenText(Texts.input, inName) THEN
+    RAISE NoInputFile
+  END;
+END RedirectInput;
+
+PROCEDURE RedirectOutput;
+BEGIN
+  Texts.CreateText(Texts.output, outName)
+END RedirectOutput;
+
+PROCEDURE PromptFor(prompt:ARRAY OF CHAR; VAR s:ARRAY OF CHAR);
+VAR i: CARDINAL;
+BEGIN
+  Texts.ReadString(commandLine, s);
+  IF s[0] = 0C THEN
+    WriteString(prompt); ReadLine(s);
+    i := 0; REPEAT s[i] := CAP(s[i]); INC(i) UNTIL i = HIGH(s);
+  END
+END PromptFor;
+
+BEGIN
+  LOOP
+    (* Re-initialize the Texts module *)
+    Texts.Init;
+
+    (* load the shell if we haven't a program to chain *)
+    IF execute = 0 THEN
+      Texts.haltOnControlC := FALSE;
+      Call("SHELL3");
+      Texts.haltOnControlC := TRUE;
+    END;
+
+    (* once it has returned, we have more memory for the program to run *)
+    index := 0;
+    Texts.ConnectDriver(commandLine, textDriver);
+    execute := 0;
+    RunModule;
+  END
+END ComLine.

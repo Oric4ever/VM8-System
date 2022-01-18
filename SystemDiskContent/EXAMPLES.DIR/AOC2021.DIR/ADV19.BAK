@@ -1,0 +1,183 @@
+MODULE Adv19;
+IMPORT Texts, Out;
+CONST MaxBeacons = 28; EOL = 1EX;
+TYPE Point = RECORD x,y,z: INTEGER END;
+
+VAR scanners : ARRAY 38,MaxBeacons OF Point;
+    nbBeacons: ARRAY 38 OF INTEGER;
+    dists1,dists2: ARRAY 14*27 OF INTEGER;
+    nbDists1, nbDists2, same: INTEGER;
+    i, j: INTEGER;
+
+PROCEDURE ReadScanners;
+VAR t: Texts.TEXT;
+    i, n: INTEGER;
+    separator: CHAR;
+    start:  ARRAY 8 OF CHAR;
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.19") );
+  FOR i := 0 TO LEN(scanners)-1 DO
+    Texts.ReadLn(t); (* skip scanner title *)
+    n := 0;
+    REPEAT
+      Texts.ReadInt  (t, scanners[i][n].x); ASSERT( Texts.Done(t) );
+      Texts.ReadChar (t, separator);        ASSERT( separator = ',' );
+      Texts.ReadInt  (t, scanners[i][n].y); ASSERT( Texts.Done(t) );
+      Texts.ReadChar (t, separator);        ASSERT( separator = ',' );
+      Texts.ReadInt  (t, scanners[i][n].z); ASSERT( Texts.Done(t) );
+      Texts.ReadLn   (t);
+      Texts.ReadChar (t, separator);
+      Texts.ReadChar (t, separator);
+      Texts.ReadAgain(t);
+      INC(n)
+    UNTIL separator = EOL;
+    Texts.ReadLn(t);
+    nbBeacons[i] := n
+  END;
+END ReadScanners;
+
+PROCEDURE ManhattanDist(a,b: Point): INTEGER;
+BEGIN RETURN ABS(a.x - b.x) + ABS(a.y - b.y) + ABS(a.z - b.z)
+END ManhattanDist;
+
+PROCEDURE CalcDistances(points: ARRAY OF Point; nb: INTEGER;
+                        VAR dists: ARRAY OF INTEGER; VAR nbDists: INTEGER);
+VAR i,j,n: INTEGER;
+BEGIN
+  nbDists := 0;
+  FOR i := 0 TO nb-2 DO
+    FOR j := i+1 TO nb-1 DO
+      dists[nbDists] := ManhattanDist(points[i], points[j]); INC(nbDists)
+    END
+  END
+END CalcDistances;
+
+PROCEDURE Sort(VAR a: ARRAY OF INTEGER; nb: INTEGER);
+VAR i,j,min, index: INTEGER;
+BEGIN
+  FOR i:=0 TO nb-2 DO
+    min := a[i];
+    FOR j:=i+1 TO nb-1 DO
+      IF a[j] < min THEN min := a[j]; index := j END
+    END;
+    a[index] := a[i]; a[i] := min
+  END
+END Sort;
+
+PROCEDURE CountSame(a, b: ARRAY OF INTEGER; nbA, nbB: INTEGER): INTEGER;
+VAR i, j, count: INTEGER;
+BEGIN
+  count := 0;
+  WHILE (i < nbA) & (j < nbB) DO
+    IF    a[i] = b[j] THEN INC(i); INC(j); INC(count)
+    ELSIF a[i] < b[j] THEN INC(i)
+    ELSE                   INC(j)
+    END
+  END;
+  RETURN count
+END CountSame;
+
+PROCEDURE RotateX(VAR points: ARRAY OF Point; nb: INTEGER);
+VAR i, y, z: INTEGER;
+BEGIN
+  FOR i:=0 TO nb-1 DO
+    y := points[i].y;
+    z := points[i].z;
+    points[i].y := z;
+    points[i].z := -y;
+  END
+END RotateX;
+
+PROCEDURE FlipX(VAR points: ARRAY OF Point; nb: INTEGER);
+VAR i, y, z: INTEGER;
+BEGIN
+  FOR i:=0 TO nb-1 DO
+    points[i].x := -points[i].x;
+    points[i].z := -points[i].z;
+  END
+END FlipX;
+
+PROCEDURE TurnXYZ(VAR points: ARRAY OF Point; nb: INTEGER);
+VAR i, x, y, z: INTEGER;
+BEGIN
+  FOR i:=0 TO nb-1 DO
+    x := points[i].x;
+    y := points[i].y;
+    z := points[i].z;
+    points[i].y := x;
+    points[i].z := y;
+    points[i].x := z;
+  END
+END TurnXYZ;
+
+PROCEDURE CompareSets(set1, set2: ARRAY OF Point; nb1, nb2: INTEGER): BOOLEAN;
+VAR i, j, u, v, x, y, z, dx, dy, dz: INTEGER;
+    nbMatches: INTEGER;
+BEGIN
+  nbMatches := 0;
+  i := 0;
+  WHILE (i < nb1-12) & (nbMatches < 12) DO
+    j := 0;
+    WHILE (j < nb1-12) & (nbMatches < 12) DO
+      dx := set2[i].x - set1[j].x;
+      dy := set2[i].y - set1[j].y;
+      dz := set2[i].z - set1[j].z;
+      nbMatches := 0;
+      FOR u := 0 TO nb1-1 DO
+        x := set1[u].x + dx;
+        y := set1[u].y + dy;
+        z := set1[u].z + dz;
+        v := 0;
+        WHILE (v < nb2) & ((x # set2[v].x) OR (y # set2[v].y) OR (z # set2[v].z)) DO
+            INC(v)
+        END;
+        IF v < nb2 THEN INC(nbMatches) END
+      END;
+      INC(j)
+    END;
+    INC(i)
+  END;
+  RETURN nbMatches >= 12
+END CompareSets;
+
+PROCEDURE CompareAllOrientations(VAR set1, set2: ARRAY OF Point;
+                                 nb1, nb2: INTEGER): BOOLEAN;
+VAR foundMatch: BOOLEAN;
+    flips, swaps, rotations: INTEGER;
+BEGIN
+  flips := 0; foundMatch := FALSE;
+  WHILE (flips < 2) & NOT foundMatch DO
+    FlipX(set2, nb2); INC(flips);
+    swaps := 0;
+    WHILE (swaps < 3) & NOT foundMatch DO
+      TurnXYZ(set2, nb2); INC(swaps);
+      rotations := 0;
+      WHILE (rotations < 4) & NOT foundMatch DO
+        RotateX(set2, nb2); INC(rotations);
+        foundMatch := CompareSets(set1, set2, nb1, nb2);
+      END
+    END
+  END;
+  RETURN foundMatch
+END CompareAllOrientations;
+
+BEGIN
+  ReadScanners;
+  FOR i:=0 TO LEN(scanners)-2 DO
+    CalcDistances(scanners[i], nbBeacons[i], dists1, nbDists1);
+    Sort(dists1, nbDists1);
+    FOR j:=i+1 TO LEN(scanners)-1 DO
+      CalcDistances(scanners[j], nbBeacons[j], dists2, nbDists2);
+      Sort(dists2, nbDists2);
+      same := CountSame(dists1, dists2, nbDists1, nbDists2);
+      IF same > 12 THEN
+        Out.Int(i, 3); Out.Int(j, 3); Out.Int(same, 4);
+        IF CompareAllOrientations(scanners[i], scanners[j], nbBeacons[i], nbBeacons[j])
+        THEN Out.String(" yes!")
+        ELSE Out.String(" no...")
+        END;
+        Out.Ln
+      END
+    END
+  END
+END Adv19.

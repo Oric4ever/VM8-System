@@ -1,0 +1,49 @@
+Compare available memory in the following situations:
+
+MemSize1: normal dynamic loading of the MemSize1 module, so the Modula-2 System is always loaded
+    (consisting in low-level modules (DISK, FAT32, FATDIR, FileDesc), user-level modules (Terminal,
+    Convert, Files, Texts), kernel modules (Excepts, InitMod, Kernel3), resident part of shell
+    (ShellRes, EditPos, ComLine, Loader))
+
+    => 51193 bytes free
+
+MemSize1.bin: build a system with only the necessary modules (no kernel, no shell).
+    # link memsize1
+    Output File: memsize1.sys
+    Include all needed modules (Y/N)? Y
+    ...
+    # finalize
+    Linked file (without .SYS extension): memsize1
+    Name of Kernel module: memsize1
+    ...
+    # runsys memsize1.bin
+
+    =>
+
+MemSize2.bin: building a system with only the Terminal module.
+    # link memsize2
+    Output File: memsize2.sys
+    Include all needed modules (Y/N)? Y
+    ...
+    # finalize
+    Linked file (without .SYS extension): memsize2
+    Name of Kernel module: memsize2
+    ...
+    # runsys memsize2.bin
+
+    => 63645 bytes free
+
+MemSize3.bin: building a system with no library module, only BIOS calls
+    # link memsize2
+    Output File: memsize2.sys
+    Include all needed modules (Y/N)? Y
+    ...
+    # finalize
+    Linked file (without .SYS extension): memsize2
+    Name of Kernel module: memsize2
+    ...
+    # runsys memsize2.bin
+
+    => 64184 bytes free
+
+

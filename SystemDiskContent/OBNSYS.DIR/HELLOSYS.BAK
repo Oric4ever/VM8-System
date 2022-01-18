@@ -1,0 +1,12 @@
+MODULE HelloSystem;
+IMPORT Terminal, SYSTEM;
+VAR name: ARRAY 20 OF CHAR;
+    result: INTEGER;
+BEGIN
+  Terminal.WriteString("What is your name ? ");
+  Terminal.ReadLine(name);
+  Terminal.WriteString("Hello ");
+  Terminal.WriteString(name);
+  Terminal.WriteLn;
+  result := SYSTEM.SYS(0,0);
+END HelloSystem.

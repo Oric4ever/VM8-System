@@ -1,0 +1,43 @@
+MODULE UAV;
+IMPORT Out, Object, Drone;
+
+TYPE Instance* = RECORD(Drone.Instance) z: INTEGER END;
+     Pointer*  = POINTER TO Instance;
+
+     Class* = RECORD(Drone.Class) END;
+     ClassRef* = POINTER TO Class;
+
+VAR class* : ClassRef;
+
+PROCEDURE Init*(VAR uav: Instance);
+BEGIN
+  Drone.Init(uav);
+  Object.Init(uav, class);
+END Init;
+
+PROCEDURE moveTo*(VAR drone: Drone.Instance; x,y: INTEGER);
+VAR uav: Instance;
+    dx, dy, energyRequired: INTEGER;
+BEGIN
+  CASE drone OF
+  |        Instance: Out.String("really an UAV.Instance")
+  |  Drone.Instance: Out.String("actually a Drone.Instance")
+  | Object.Instance: Out.String("actually an Object.Instance!")
+  END;
+(* $T- don't generate type guard test *)
+
+  uav := drone(Instance);
+  dx := x - drone.x;
+  dy := y - drone.y;
+  energyRequired := dx*dx + dy*dy;
+  IF uav.energy > energyRequired THEN
+    Drone.ConsumeEnergy(uav, energyRequired);
+    Drone.moveTo(uav, x, y)
+  END
+END moveTo;
+
+BEGIN
+  NEW(class);
+  class.super  := Drone.class;
+  class.moveTo := moveTo;
+END UAV.

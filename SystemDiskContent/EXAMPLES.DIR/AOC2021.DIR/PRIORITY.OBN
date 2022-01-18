@@ -1,0 +1,62 @@
+MODULE Priority;
+(* some sort of priority queue implemented as two-level circular buffers *)
+IMPORT Elem, Out;
+CONST NbPriorities= 16; SizePerPriority = 512;
+TYPE ValueFct* = PROCEDURE(x: Elem.Type):INTEGER;
+
+VAR buffer: ARRAY NbPriorities,SizePerPriority OF Elem.Type;
+    putIndex, getIndex: ARRAY NbPriorities OF INTEGER;
+    firstPriorityIndex, firstPriority, nextPriority: INTEGER;
+
+PROCEDURE IsEmpty*(): BOOLEAN;
+BEGIN RETURN firstPriority = nextPriority
+END IsEmpty;
+
+PROCEDURE Store*(elem: Elem.Type; priority: INTEGER);
+VAR queueNum, offset: INTEGER;
+BEGIN
+  ASSERT(priority > firstPriority);
+  ASSERT(priority < firstPriority + NbPriorities);
+  IF priority >= nextPriority THEN nextPriority := priority + 1 END;
+  offset := priority - firstPriority;
+  queueNum := (firstPriorityIndex + offset) MOD NbPriorities;
+  buffer[queueNum][putIndex[queueNum]] := elem;
+  putIndex[queueNum] := (putIndex[queueNum] + 1) MOD SizePerPriority;
+  ASSERT( putIndex[queueNum] # getIndex[queueNum] );
+END Store;
+
+PROCEDURE Dequeue*(VAR elem: Elem.Type; VAR priority: INTEGER);
+BEGIN
+  ASSERT( firstPriority # nextPriority );
+  priority := firstPriority;
+  elem := buffer[firstPriorityIndex][getIndex[firstPriorityIndex]];
+  getIndex[firstPriorityIndex] := (getIndex[firstPriorityIndex] + 1) MOD SizePerPriority;
+  WHILE getIndex[firstPriorityIndex] = putIndex[firstPriorityIndex] DO
+    INC(firstPriority);
+    firstPriorityIndex := (firstPriorityIndex + 1) MOD NbPriorities;
+    Out.String("Next priority:");Out.Int(firstPriority, 5);
+    IF getIndex[firstPriorityIndex] > putIndex[firstPriorityIndex] THEN
+      Out.Int(putIndex[firstPriorityIndex]-getIndex[firstPriorityIndex]+512, 5)
+    ELSE
+      Out.Int(putIndex[firstPriorityIndex]-getIndex[firstPriorityIndex], 5)
+    END;
+    Out.String(" elems."); Out.Ln
+  END
+END Dequeue;
+
+(*
+PROCEDURE Contains*(elem: Elem.Type): BOOLEAN;
+VAR found: BOOLEAN;
+    index: INTEGER;
+BEGIN
+  found := FALSE;
+  index := getIndex;
+  WHILE (index # putIndex) & NOT found DO
+    found := Elem.Equals(elem, buffer[index]);
+    index := (index + 1) MOD Size
+  END;
+  RETURN found
+END Contains;
+*)
+
+END Priority.

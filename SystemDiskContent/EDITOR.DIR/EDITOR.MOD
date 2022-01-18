@@ -886,7 +886,7 @@ BEGIN
              insertChar(code);
       | 19 : (* end edit *) EDITDISK.proc4; global19 := TRUE
       | 20 : (* repeat last find *) showControlChar('L'); EDIT2.proc1
-      | 21 : (* FF: compile *) EDITDISK.proc4; global19 := TRUE; ComLine.Chain("OBN",ComLine.inName,"")
+      | 21 : (* FF: compile *) EDITDISK.proc4; global19 := TRUE; ComLine.Chain("OBN",ComLine.commandBuffer,"","")
       | 22 : (* FF: goto next error *) goToNextError
       END;
     END;

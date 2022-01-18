@@ -1,0 +1,177 @@
+MODULE Adv18;
+IMPORT Files, Texts, Out, SYSTEM;
+TYPE Type   = POINTER TO Object;
+     Object  = TAGGED RECORD END;
+     Pair    = RECORD(Object) left, right: Type END;
+     Number  = RECORD(Object) num: INTEGER ; next: Type END;
+     PairPtr = POINTER TO Pair;
+     NumPtr  = POINTER TO Number;
+
+VAR reduceDone: BOOLEAN;
+    i,j,n,mag,max, rightExplode, heap: INTEGER;
+    lastNum: NumPtr;
+    t: Texts.TEXT;
+    file: Files.FILE;
+    expr, expr2, sum: Type;
+
+PROCEDURE NewNum(n: INTEGER):Type;
+VAR numPtr: NumPtr;
+BEGIN
+  NEW(numPtr); ASSERT( numPtr # NIL );
+  numPtr.num := n;
+  RETURN numPtr
+END NewNum;
+
+PROCEDURE Cons(a,b: Type):Type;
+VAR pair: PairPtr;
+BEGIN
+  NEW(pair); ASSERT( pair # NIL);
+  pair.left  := a;
+  pair.right := b;
+  RETURN pair
+END Cons;
+
+PROCEDURE Explode(VAR root: Type; level: INTEGER);
+VAR pairPtr: PairPtr;
+    numPtr: NumPtr;
+    split: INTEGER;
+    expr: Type;
+BEGIN
+  expr := root;
+  CASE expr OF
+  | NumPtr:
+    lastNum    := expr;
+    expr.num   := expr.num + rightExplode;
+    rightExplode := 0;
+  | PairPtr:
+    IF NOT reduceDone AND (level = 4) THEN (* Explode *)
+      numPtr := expr.left(NumPtr);
+      IF lastNum # NIL THEN lastNum.num := lastNum.num + numPtr.num END;
+      numPtr.num := 0; root := numPtr;
+      numPtr := expr.right(NumPtr); rightExplode := numPtr.num;
+      DISPOSE(numPtr); DISPOSE(expr);
+      reduceDone := TRUE;
+    ELSE
+      Explode(expr.left,  level+1);
+      Explode(expr.right, level+1);
+    END
+  END
+END Explode;
+
+PROCEDURE Split(VAR root: Type);
+VAR pairPtr: PairPtr;
+    numPtr: NumPtr;
+    split: INTEGER;
+    expr : Type;
+BEGIN
+  expr := root;
+  CASE expr OF
+  | NumPtr:
+    IF NOT reduceDone AND (expr.num > 9) THEN (* Split *)
+      split      := expr.num DIV 2;
+      expr.num   := expr.num - split;
+      root       := Cons(NewNum(split), expr);
+      reduceDone := TRUE
+    END
+  | PairPtr:
+    Split(expr.left);
+    Split(expr.right);
+  END
+END Split;
+
+PROCEDURE Reduce(VAR root: Type): BOOLEAN;
+BEGIN
+  reduceDone := FALSE; rightExplode := 0; lastNum := NIL;
+  Explode(root, 0);
+  IF NOT reduceDone THEN Split(root) END;
+  RETURN reduceDone
+END Reduce;
+
+PROCEDURE Add(a, b: Type): Type;
+VAR result: Type;
+BEGIN
+  result := Cons(a, b);
+  WHILE Reduce(result) DO END;
+  RETURN result
+END Add;
+
+PROCEDURE Read(t: Texts.TEXT): Type;
+VAR c, delimiter: CHAR;
+    left,right,result: Type;
+BEGIN
+  Texts.ReadChar(t, c);
+  IF c = '[' THEN
+    left   := Read(t); Texts.ReadChar(t, delimiter); ASSERT( delimiter = ',' );
+    right  := Read(t); Texts.ReadChar(t, delimiter); ASSERT( delimiter = ']' );
+    result := Cons(left, right)
+  ELSE
+    result := NewNum(ORD(c)-ORD('0'))
+  END;
+  RETURN result
+END Read;
+
+PROCEDURE Copy(p: Type):Type;
+VAR copy: Type;
+BEGIN
+  CASE p OF
+  | PairPtr: copy := Cons(Copy(p.left), Copy(p.right))
+  | NumPtr : copy := NewNum(p.num)
+  END;
+  RETURN copy
+END Copy;
+
+PROCEDURE Print(p: Type);
+BEGIN
+  CASE p OF
+  | PairPtr: Out.Char('['); Print(p.left); Out.Char(','); Print(p.right); Out.Char(']')
+  | NumPtr : Out.Int(p.num, 1)
+  END
+END Print;
+
+PROCEDURE Magnitude(p: Type): INTEGER;
+VAR mag: INTEGER;
+BEGIN
+  CASE p OF
+  | NumPtr : mag := p.num
+  | PairPtr: mag := Magnitude(p.left)*3 + Magnitude(p.right)*2
+  END;
+  RETURN mag
+END Magnitude;
+
+PROCEDURE Free(p: Type);
+BEGIN
+  CASE p OF
+  | NumPtr : DISPOSE(p)
+  | PairPtr: Free(p.left); Free(p.right); DISPOSE(p)
+  END
+END Free;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.18") );
+  file := Texts.TextFile(t);
+  expr := Read(t);
+  FOR i:=2 TO 100 DO
+    Texts.ReadLn(t); expr2 := Read(t);
+    expr := Add(expr, expr2);
+  END;
+  Out.Int(Magnitude(expr), 5); Out.Ln;
+
+
+  FOR i:=0 TO 99 DO
+    Files.SetPos(file, LONG(0));
+    FOR n:=1 TO i DO Texts.ReadLn(t) END;
+    expr := Read(t);
+
+    Files.SetPos(file, LONG(0));
+    FOR j:=0 TO 99 DO
+      expr2 := Read(t); Texts.ReadLn(t);
+      IF i # j THEN
+        sum := Add(Copy(expr),expr2);
+        mag := Magnitude(sum);
+        IF mag > max THEN max := mag END;
+        Free(sum);
+      END
+    END
+  END;
+  Out.Int(max, 5);
+END Adv18.

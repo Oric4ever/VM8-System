@@ -1,0 +1,14 @@
+MODULE Cons;
+IMPORT Out;
+
+TYPE
+    Pair = POINTER TO PairRec;
+    PairRec = RECORD left, right: Pair END;
+
+VAR pair : Pair;
+    i: INTEGER;
+
+BEGIN
+  FOR i:=1 TO 10000 DO NEW(pair) END;
+END Cons.
+

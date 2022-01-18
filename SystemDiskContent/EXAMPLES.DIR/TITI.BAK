@@ -1,0 +1,9 @@
+MODULE Titi;
+IMPORT Out;
+VAR a: LONGINT;
+    b: INTEGER;
+BEGIN
+  a := LONGINT(42);
+  b := INT(a);
+  Out.Int(b, 3)
+END Titi.

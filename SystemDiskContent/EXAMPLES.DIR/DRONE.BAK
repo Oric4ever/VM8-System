@@ -1,0 +1,44 @@
+MODULE Drone;
+IMPORT Out, Object;
+
+TYPE
+    Instance* = RECORD(Object.Instance)
+                  x*, y*, energy*: INTEGER
+                END;
+    Pointer*  = POINTER TO Instance;
+
+    MoveProc* = PROCEDURE(VAR drone: Instance; x,y: INTEGER);
+    Class* = RECORD(Object.Class)
+               (* dynamic procedure moveTo *)
+               moveTo*: MoveProc;
+             END;
+    ClassRef* = POINTER TO Class;
+VAR
+    class* : ClassRef;
+
+PROCEDURE Init*(VAR drone: Instance);
+BEGIN
+  Object.Init(drone, class);
+  drone.x := 0;
+  drone.y := 0;
+  drone.energy := 1000;
+END Init;
+
+PROCEDURE ConsumeEnergy*(VAR drone: Instance; energy: INTEGER);
+BEGIN drone.energy := drone.energy - energy
+END ConsumeEnergy;
+
+(* default moveTo procedure for class Drone. Without a default proc, moveTo would be 'abstract' *)
+PROCEDURE moveTo*(VAR drone: Instance; x,y: INTEGER);
+BEGIN
+Out.String("moving a drone..."); Out.Ln;
+  ConsumeEnergy(drone, ABS(x - drone.x) - ABS(y - drone.y));
+  drone.x := x;
+  drone.y := y;
+END moveTo;
+
+BEGIN
+  NEW(class);
+  class.super  := Object.class;
+  class.moveTo := moveTo;
+END Drone.

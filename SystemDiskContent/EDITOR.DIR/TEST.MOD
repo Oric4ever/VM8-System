@@ -1,0 +1,8 @@
+MODULE Test;
+IMPORT ComLine;
+BEGIN
+  WRITELN(ComLine.progName);
+  WRITELN(ComLine.commandBuffer);
+  WRITELN(ComLine.inName);
+  WRITELN(ComLine.outName);
+END Test.

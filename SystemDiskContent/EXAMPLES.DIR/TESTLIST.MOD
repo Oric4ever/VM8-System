@@ -1,0 +1,36 @@
+MODULE TestList;
+
+IMPORT Out, LinkedList;
+
+TYPE IntBox  = RECORD(LinkedList.Box) value: INTEGER END;
+     IntList = POINTER TO IntBox;
+     ListNode= IntList;
+
+VAR list: IntList;
+    item: IntList;
+    i   : INTEGER;
+
+PROCEDURE IsOdd(item: LinkedList.Box): BOOLEAN;
+BEGIN RETURN ODD(item(IntBox).value)
+END IsOdd;
+
+PROCEDURE Double(VAR item: LinkedList.Box);
+BEGIN
+  item(IntBox).value := item(IntBox).value * 2
+END Double;
+
+BEGIN
+  FOR i := 2 TO 10 DO
+    NEW(item); item.value := i;
+    LinkedList.Add(list, item)
+  END;
+  Out.String("Searching...");
+  LinkedList.Find(list, IsOdd, item);
+  Out.Int(item.value, 1); Out.Ln;
+  LinkedList.Map(list, Double);
+  WHILE NOT LinkedList.IsEmpty(list) DO
+    Out.Int(list.value, 3);
+    LinkedList.Rest(list, list)
+  END;
+  Out.Ln
+END TestList.

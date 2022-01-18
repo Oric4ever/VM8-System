@@ -3,7 +3,6 @@ FROM SYSTEM IMPORT ADR,WORD,BYTE,IORESULT,FILL;
 IMPORT Disk;
 FROM NEWFAT32 IMPORT ReadFS, WriteFS, bufferFS, ClusterToLBA, NextSector, firstRootCluster,
                      WriteFragment, FindFreeCluster, PutFATentry, DeleteChain;
-IMPORT Terminal;
 (*
 TYPE
     BaseName = ARRAY [0..7] OF CHAR;
@@ -90,9 +89,6 @@ BEGIN
   ELSE entryName.extension := ext
   END;
   IF forceExt THEN entryName.extension := ext END;
-Terminal.WriteString(name);Terminal.WriteChar('+');Terminal.WriteString(ext);
-Terminal.WriteChar('='); Terminal.WriteString(entryName.fullName);
-Terminal.WriteChar('/');
 END Build83Name;
 
 (*********************************************************************)

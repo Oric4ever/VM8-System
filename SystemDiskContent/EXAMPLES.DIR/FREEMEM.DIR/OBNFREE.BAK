@@ -1,0 +1,7 @@
+MODULE ObnFree;
+IMPORT SYSTEM, Out;
+BEGIN
+  Out.Card(SYSTEM.FREEMEM(), 5);
+  Out.String(" bytes free");
+  Out.Ln;
+END ObnFree.

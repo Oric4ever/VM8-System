@@ -1,0 +1,8 @@
+MODULE Test;
+IMPORT ComLine, Out;
+BEGIN
+  Out.String(ComLine.progName); Out.Ln;
+  Out.String(ComLine.commandBuffer); Out.Ln;
+  Out.String(ComLine.inName); Out.Ln;
+  Out.String(ComLine.outName); Out.Ln;
+END Test.

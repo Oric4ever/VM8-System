@@ -1,0 +1,7 @@
+MODULE ObnFree;
+IMPORT SYSTEM, Texts;
+BEGIN
+  Texts.WriteCard  (Texts.output, SYSTEM.FREEMEM(), 5);
+  Texts.WriteString(Texts.output, " bytes free");
+  Texts.WriteLn    (Texts.output);
+END ObnFree.

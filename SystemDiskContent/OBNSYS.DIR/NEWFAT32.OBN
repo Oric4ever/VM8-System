@@ -1,0 +1,9 @@
+MODULE NEWFAT32;
+(* partial module stub, just to have UnmountFS for REBOOT *)
+TYPE LBA = LONGINT;
+PROCEDURE WriteFS*;             BEGIN END WriteFS;
+PROCEDURE ReadFS*(sector: LBA); BEGIN END ReadFS;
+PROCEDURE InitFS*;              BEGIN END InitFS;
+PROCEDURE UnmountFS*;           BEGIN END UnmountFS;
+PROCEDURE SyncFS*;              BEGIN END SyncFS;
+END NEWFAT32.

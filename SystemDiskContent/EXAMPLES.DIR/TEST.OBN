@@ -1,0 +1,18 @@
+MODULE Test;
+(* $T- *)
+IMPORT Out;
+TYPE Fct = PROCEDURE(a:INTEGER):INTEGER;
+VAR i,j: INTEGER;
+    ops: ARRAY 10 OF Fct;
+    r: RECORD f: Fct END;
+    f: Fct;
+
+PROCEDURE Inc(a:INTEGER):INTEGER; BEGIN RETURN a+1 END Inc;
+
+BEGIN
+  r.f := Inc;
+  i := r.f(3);
+  FOR i:=0 TO 9 DO ops[i] := Inc END;
+  i := 3;
+  i := ops[i](j);
+END Test.

@@ -1,0 +1,21 @@
+DEFINITION MODULE Functs;
+FROM SYSTEM IMPORT WORD;
+
+PROCEDURE Add(a,b : CARDINAL);
+PROCEDURE Sub(a,b : CARDINAL);
+PROCEDURE Mul(a,b : CARDINAL);
+PROCEDURE Div(a,b : CARDINAL);
+PROCEDURE Mod(a,b : CARDINAL);
+
+PROCEDURE PickRandom(num : CARDINAL);
+
+PROCEDURE JumpLess   (a,b : INTEGER);
+PROCEDURE JumpGreater(a,b : INTEGER);
+PROCEDURE JumpEqual  (a   : ARRAY OF WORD);
+
+PROCEDURE Test    (a,b : BITSET);
+PROCEDURE Or      (a,b : BITSET);
+PROCEDURE And     (a,b : BITSET);
+PROCEDURE Not     (a   : BITSET);
+
+END Functs.

@@ -1,0 +1,61 @@
+MODULE Adv25;
+IMPORT Texts, Out;
+CONST WIDTH=139; HEIGHT=137;
+VAR area: ARRAY HEIGHT,WIDTH OF CHAR;
+    n: INTEGER;
+
+PROCEDURE Init;
+VAR t: Texts.TEXT;
+    n: INTEGER;
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.25") );
+  FOR n:=0 TO HEIGHT-1 DO Texts.ReadString(t, area[n]) END;
+  Texts.CloseText(t);
+END Init;
+
+PROCEDURE DoMoves(): INTEGER;
+VAR i,n,rollBack, moves: INTEGER;
+    first, last: CHAR;
+    shifted : BOOLEAN;
+BEGIN
+ moves := 0;
+ rollBack := WIDTH-1;
+ FOR n:=0 TO HEIGHT-1 DO
+   first := area[n][0];
+   last  := area[n][WIDTH-1];
+   shifted := (last = '>') & (first = '.');
+   FOR i:=0 TO WIDTH-2 DO
+     IF shifted THEN area[n][i] := '>'; shifted := FALSE
+     ELSIF (area[n][i] = '>') & (area[n][i+1] = '.') THEN
+       area[n][i] := '.'; shifted := TRUE; INC(moves)
+     END
+   END;
+   IF shifted THEN area[n][i] := '>'
+   ELSIF (last = '>') & (first = '.') THEN area[n][i] := '.'; INC(moves)
+   END
+ END;
+
+ rollBack := HEIGHT-1;
+ FOR i:=0 TO WIDTH-1 DO
+   first := area[0][i];
+   last  := area[HEIGHT-1][i];
+   shifted := (last = 'v') & (area[0][i] = '.');
+   FOR n:=0 TO HEIGHT-2 DO
+     IF shifted THEN area[n][i] := 'v'; shifted := FALSE
+     ELSIF (area[n][i] = 'v') & (area[n+1][i] = '.') THEN
+       area[n][i] := '.'; shifted := TRUE; INC(moves)
+     END
+   END;
+   IF shifted THEN area[n][i] := 'v'
+   ELSIF (last = 'v') & (first = '.') THEN area[n][i] := '.'; INC(moves)
+   END
+ END;
+ Out.Int(moves,5); Out.Ln;
+ RETURN moves
+END DoMoves;
+
+BEGIN
+  Init;
+  n := 0;
+  REPEAT INC(n); Out.Int(n, 4) UNTIL DoMoves() = 0;
+END Adv25.

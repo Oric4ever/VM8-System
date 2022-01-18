@@ -1,0 +1,33 @@
+MODULE Adv17;
+IMPORT Out;
+CONST xMin = 211; xMax = 232; yMin = -124; yMax = -69;
+VAR i,x,y,dx,dy,vx,vy, count: INTEGER;
+    hit: BOOLEAN;
+
+PROCEDURE Sommielle(x: INTEGER):INTEGER;
+VAR sum,i: INTEGER;
+BEGIN
+  sum := 0; FOR i:=1 TO x DO sum := sum + i END;
+  RETURN sum
+END Sommielle;
+
+BEGIN
+  Out.String("Part A:"); Out.Int(Sommielle(ABS(yMin)-1), 4); Out.Ln;
+  
+  FOR vx:=20 TO xMax DO
+    FOR vy:=yMin TO ABS(yMin) DO
+      x := 0; y := 0; dx := vx; dy := vy;
+      hit := FALSE;
+      WHILE (y >= yMin) DO
+        x := x + dx; y := y + dy;
+        IF (x >= xMin) & (x <= xMax) & (y >= yMin) & (y <= yMax) THEN
+          hit := TRUE
+        END;
+        IF dx # 0 THEN DEC(dx) END;
+        DEC(dy);
+      END;
+      IF hit THEN INC(count) END;
+    END
+  END;
+  Out.String("Part B:"); Out.Int(count, 5); Out.Ln
+END Adv17.

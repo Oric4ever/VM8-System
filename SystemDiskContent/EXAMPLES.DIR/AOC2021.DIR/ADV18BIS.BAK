@@ -1,0 +1,160 @@
+MODULE Adv18;
+IMPORT Files, Texts, Out;
+TYPE Expr    = POINTER TO Node;
+     Node    = RECORD num: INTEGER; left, right: Expr END;
+
+VAR reduceDone: BOOLEAN;
+    i,j,n,mag,max: INTEGER;
+    t: Texts.TEXT;
+    file: Files.FILE;
+    expr, expr2, sum: Expr;
+
+PROCEDURE NewNode(value: INTEGER; left,right: Expr): Expr;
+VAR pair: Expr;
+BEGIN
+  NEW(pair); ASSERT( pair # NIL);
+  pair.num   := value;
+  pair.left  := left;
+  pair.right := right;
+  RETURN pair
+END NewNode;
+
+PROCEDURE Explode(expr: Expr; level: INTEGER;
+                  VAR lastLeaf: Expr;
+                  VAR exploded: BOOLEAN;
+                  VAR rightExplode: INTEGER);
+BEGIN
+  IF expr.left = NIL THEN
+    lastLeaf     := expr;
+    expr.num     := expr.num + rightExplode;
+    rightExplode := 0;
+  ELSE
+    IF NOT exploded AND (level = 4) THEN (* Explode *)
+      expr.num := 0;
+      IF lastLeaf # NIL THEN lastLeaf.num := lastLeaf.num + expr.left.num END;
+      rightExplode := expr.right.num;
+      DISPOSE(expr.left);
+      DISPOSE(expr.right);
+      exploded := TRUE;
+    ELSE (* continue explode to propagate right part *)
+      Explode(expr.left,  level+1, lastLeaf, exploded, rightExplode);
+      Explode(expr.right, level+1, lastLeaf, exploded, rightExplode);
+    END
+  END
+END Explode;
+
+PROCEDURE Split(expr: Expr): BOOLEAN;
+VAR splitted: BOOLEAN;
+BEGIN
+  IF expr.left = NIL THEN
+    splitted := expr.num > 9;
+    IF splitted THEN
+      expr.left  := NewNode(expr.num DIV 2, NIL, NIL);
+      expr.right := NewNode(expr.num - expr.left.num, NIL, NIL);
+      expr.num   := -1;
+    END
+  ELSE
+    splitted := Split(expr.left) OR Split(expr.right)
+  END;
+  RETURN splitted
+END Split;
+
+PROCEDURE Reduce(expr: Expr): BOOLEAN;
+VAR lastLeaf: Expr;
+    exploded: BOOLEAN;
+    rightExplode: INTEGER;
+BEGIN
+  lastLeaf := NIL; exploded := FALSE; rightExplode := 0;
+  Explode(expr, 0, lastLeaf, exploded, rightExplode);
+  RETURN exploded OR Split(expr)
+END Reduce;
+
+PROCEDURE Add(a, b: Expr): Expr;
+VAR result: Expr;
+BEGIN
+  result := NewNode(-1, a, b);
+  WHILE Reduce(result) DO END;
+  RETURN result
+END Add;
+
+PROCEDURE Read(t: Texts.TEXT): Expr;
+VAR c, delimiter: CHAR;
+    left,right,result: Expr;
+BEGIN
+  Texts.ReadChar(t, c);
+  IF c = '[' THEN
+    left   := Read(t); Texts.ReadChar(t, delimiter); ASSERT( delimiter = ',' );
+    right  := Read(t); Texts.ReadChar(t, delimiter); ASSERT( delimiter = ']' );
+    result := NewNode(-1, left, right)
+  ELSE
+    result := NewNode(ORD(c)-ORD('0'), NIL, NIL)
+  END;
+  RETURN result
+END Read;
+
+PROCEDURE Copy(expr: Expr):Expr;
+VAR copy: Expr;
+BEGIN
+  IF expr = NIL
+  THEN copy := NIL
+  ELSE copy := NewNode(expr.num, Copy(expr.left), Copy(expr.right))
+  END;
+  RETURN copy
+END Copy;
+
+PROCEDURE Print(p: Expr);
+VAR left, right: Expr;
+BEGIN
+  IF p.left # NIL THEN
+    Out.Char('['); Print(p.left);
+    Out.Char(','); Print(p.right);
+    Out.Char(']')
+  ELSE Out.Int(p.num, 1)
+  END
+END Print;
+
+PROCEDURE Magnitude(p: Expr): INTEGER;
+VAR left, right: Expr;
+    mag: INTEGER;
+BEGIN
+  IF p.left = NIL
+  THEN mag := p.num
+  ELSE mag := Magnitude(p.left)*3 + Magnitude(p.right)*2
+  END;
+  RETURN mag
+END Magnitude;
+
+PROCEDURE Free(expr: Expr);
+BEGIN
+  IF expr # NIL THEN Free(expr.left); Free(expr.right); DISPOSE(expr) END
+END Free;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.18") );
+  file := Texts.TextFile(t);
+  expr := Read(t);
+  FOR i:=2 TO 100 DO
+    Texts.ReadLn(t); expr2 := Read(t);
+    expr := Add(expr, expr2);
+  END;
+  Out.Int(Magnitude(expr), 5); Out.Ln;
+
+
+  FOR i:=0 TO 99 DO
+    Files.SetPos(file, LONG(0));
+    FOR n:=1 TO i DO Texts.ReadLn(t) END;
+    expr := Read(t);
+
+    Files.SetPos(file, LONG(0));
+    FOR j:=0 TO 99 DO
+      expr2 := Read(t); Texts.ReadLn(t);
+      IF i # j THEN
+        sum := Add(Copy(expr),expr2);
+        mag := Magnitude(sum);
+        IF mag > max THEN max := mag END;
+        Free(sum);
+      END
+    END
+  END;
+  Out.Int(max, 5);
+END Adv18.

@@ -1,0 +1,10 @@
+DEFINITION MODULE Property;
+FROM SYSTEM IMPORT WORD;
+
+PROCEDURE  GetProp    (objNum, propNum: CARDINAL);
+PROCEDURE  PutProp    (objNum, propNum, value : CARDINAL);
+PROCEDURE  GetPropAddr(objNum, propNum: CARDINAL);
+PROCEDURE  GetNextProp(objNum, propNum: CARDINAL);
+PROCEDURE  GetPropLen (objNum         : CARDINAL);
+
+END Property.

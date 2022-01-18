@@ -2,7 +2,7 @@ Oberon-07 compiler implementation notes
 
 
 This Oberon-07 compiler is based on Project Oberon's compiler (www.projectoberon.com).
-Mainly the code generator (in Project Oberon it targets a custom RISC design 
+Mainly the code generator (in Project Oberon it targets a custom RISC design
 implemented in VHDL) has been replaced here by a new code generator targetting
 a slightly extended version of Turbo Modula-2's virtual machine (that was itself
 derived from Lilith's architecture, which in turn was inspired by Xerox' MESA
@@ -24,6 +24,7 @@ order yet...
 - Predefined procedures
 - SYSTEM module
 - Type compatibility
+- Language extensions
 - Known bugs
 
 
@@ -41,8 +42,11 @@ Hence,
     $T- deactivates Assertions and Bounds checks generation
     $T+   activates Assertions and Bounds checks generation (default behavior)
 
-    $[+ deactivates Procedure names generation (default behavior)
-    $[-   activates Procedure names generation 
+    $X- deactivates Language extensions (default behavior)
+    $X+   activates Language extensions
+
+    $[- deactivates Procedure names removal
+    $[+   activates Procedure names removal (default behavior)
 
 Integer Arithmetic Overflow checks means that any arithmetic operation (even simple
 incrementations/decrementations) in the compiled source is translated into a checked
@@ -54,13 +58,18 @@ Assertions and Bounds checks generation is also recommended. Every access to an 
 with a non constant index will generate a runtime bound check, and assertions will
 generate checks that are trapped at run time (and reveal the source line code of
 the failed assertion, so programming with assertions is really recommended).
-If this option is deactivated, index checks will not be generated (slightly faster 
+If this option is deactivated, index checks will not be generated (slightly faster
 and smaller code), and false assertions won't be trapped (still, the boolean expression
 inside the ASSERT will be evaluated, as it might happen that this expression has some
 side effect). E.g: ASSERT( Texts.OpenText(text, "foo.bar") )
 
-Procedure names generation will in the future be useful for advanced debugging
-features. For now it is deactivated, as this removes 5 bytes for each procedure.
+Language extensions are deactivated by default so that using language extensions
+does not become the norm. But my feeling is that some changes in the Oberon language
+would be useful and will experiment these with these extensions. See paragraph
+Language extensions for a discussion of these.
+
+Procedure names removal is currently activated, as this removes 5 bytes for each
+procedure. In the future it might be deactivated for advanced debugging capabilities.
 
 
 Basic types
@@ -380,6 +389,56 @@ to POINTER types: the pointer type of a formal parameter passed by VARiable can 
 base type of the corresponding actual parameter's type.
 
 
+Language extensions
+===================
+
+This document will be restructured so that a number of language changes are discussed
+in this paragraph...
+
+For now, option $X+ only implies a small change the Oberon syntax: instead of being
+a terminator token of procedure, RETURN becomes a statement that can be used multiple
+times in a procedure/function.
+
+It is often considered a good practice to have a single exit point in a procedure, this
+is why the Oberon language enforces a single RETURN at the end of a procedure/function.
+So, the rationale for allowing multiple RETURNs is the following: enforcing a single
+RETURN in a function usually obliges to define a local variable of the returned type,
+so that this variable is assigned to in each branch of the function.
+
+For example, a recursive factorial function would be written like this:
+
+PROCEDURE Fact(n: INTEGER): INTEGER;
+VAR result: INTEGER;
+BEGIN
+  ASSERT( n >= 0 );
+  IF n = 0
+  THEN result := 1
+  ELSE result := fact(n-1) * n
+  END;
+  RETURN result
+END Fact;
+
+However, there is no check in the compiler that the local variable that is returned at
+the end of the function has been assigned to in every branch of the function's code.
+Hence, there is a single exit point at the end of the function, but care must be taken
+that every branch assigns to this local variable. So actually, the problem of multiple
+RETURNs is replaced by a problem of multiple variable assignments, which is very error-
+prone when considering that Oberon language lacks initialization of variables at the
+location of their declarations. So, I've considered that it's not more error-prone to
+allow multiple RETURNs: the RETURN keyword, being written in capitals, is more easily
+spotted in the source code than the assignment of a variable, and at the end, the code
+becomes shorter and simpler. For example, the previous example becomes:
+
+PROCEDURE Fact(n: INTEGER): INTEGER;
+BEGIN
+  ASSERT( n >= 0 );
+  IF n = 0
+  THEN RETURN 1
+  ELSE RETURN fact(n-1) * n
+  END
+END Fact;
+
+
 Known bugs
 ==========
 
@@ -387,7 +446,7 @@ Known bugs
 
 When a procedure address is not stored in simple variable but instead inside an array
 or a record, and when this indirectly called procedure requires parameters, then the
-the sequence of generated opcodes is not in correct order. 
+the sequence of generated opcodes will not be in the correct order.
 The problem is that parameters are pushed on stack before the indirect call opcode
 is executed and thus the call will not use the correct procedure address.
 This also means that the bug doesn't show up for procedures that don't have parameters.
@@ -411,7 +470,7 @@ BEGIN
   i := functions[i](i);  (* CAUTION this line generates bad code *)
   function1 := functions[i];  (* using a simple variable works *)
   i := function1(i);     (* so this is a workaround... *)
-  
+
 
 2. Tag CASE switch in recursive procedures
 
@@ -454,3 +513,4 @@ BEGIN
 END Recursive;
 
 
+

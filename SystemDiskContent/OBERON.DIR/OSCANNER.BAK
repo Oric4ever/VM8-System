@@ -1,5 +1,5 @@
 MODULE OScanner; (* NW 19.9.93 / 15.3.2017  Scanner in Oberon-07*)
-  IMPORT Files, ComLine, Texts, SYSTEM;
+  IMPORT Terminal, Files, ComLine, Texts, SYSTEM;
 
   (* $[+ remove procedure names *)
   (* $O- remove overflow tests *)
@@ -113,12 +113,12 @@ MODULE OScanner; (* NW 19.9.93 / 15.3.2017  Scanner in Oberon-07*)
     id*: Ident;  (*for identifiers*)
     str*: ARRAY stringBufSize OF CHAR;
     errcnt*: INTEGER;
-    check*, checkOvf*, suppressNames*: BOOLEAN; (* compilation options *)
     inName* : ARRAY 20 OF CHAR;
 
     ch: CHAR;  (*last character read*)
     R,err: Texts.TEXT;
-    k: INTEGER;
+
+    check*, checkOvf*, suppressNames*, extensions*: BOOLEAN; (* compilation options *)
 
     line, column, tokenLine, tokenColumn: INTEGER;
     pos, errpos, tokenPos: LONGINT;
@@ -260,12 +260,12 @@ MODULE OScanner; (* NW 19.9.93 / 15.3.2017  Scanner in Oberon-07*)
   PROCEDURE String(delimiter: CHAR);
   BEGIN
     slen := 0; NextChar;
-    WHILE (NOT Texts.EOT(R)) & (ch # delimiter) DO
-      IF ch >= " " THEN
-        IF slen < stringBufSize THEN str[slen] := ch; INC(slen) ELSE Mark("string too long") END ;
-      END ;
+    WHILE (NOT Texts.EOT(R)) & (NOT Texts.EOLN(R)) & (ch # delimiter) DO
+      IF slen < stringBufSize THEN str[slen] := ch; INC(slen) ELSE Mark("string too long") END ;
       NextChar
     END ;
+    IF ch # delimiter THEN Mark("bad string end") END;
+    IF slen = 0 THEN str[0] := 0X; INC(slen) END;
     NextChar;
   END String;
 
@@ -388,6 +388,7 @@ MODULE OScanner; (* NW 19.9.93 / 15.3.2017  Scanner in Oberon-07*)
       NextChar; option := ch; NextChar; onOff := (ch = "+"); NextChar;
       IF    option = "T" THEN check     := onOff
       ELSIF option = "O" THEN checkOvf  := onOff
+      ELSIF option = "X" THEN extensions    := onOff
       ELSIF option = "[" THEN suppressNames := onOff
       END
     END;

@@ -22,8 +22,8 @@ BEGIN Texts.WriteLong(Texts.output, l, n)
 END Long;
 
 PROCEDURE Hex*   (i: INTEGER);
-  PROCEDURE HexByte(i: BYTE);
-    PROCEDURE HexDigit(i: BYTE);
+  PROCEDURE HexByte(i: INTEGER);
+    PROCEDURE HexDigit(i: INTEGER);
     BEGIN
       IF i < 10
       THEN Char(CHR(i + ORD('0')))
@@ -36,7 +36,7 @@ PROCEDURE Hex*   (i: INTEGER);
   END HexByte;
 BEGIN
   Char(' ');
-  HexByte( i DIV 256 );
+  HexByte( i DIV 256 MOD 256);
   HexByte( i MOD 256 );
 END Hex;
 

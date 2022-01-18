@@ -1,0 +1,42 @@
+IMPLEMENTATION MODULE Misc;
+FROM GameFile IMPORT basePtr, GetWord, GetByte;
+FROM Support  IMPORT Store;
+
+CONST BLOCKSIZE = 512;
+TYPE  Byte      = [0..255];
+
+PROCEDURE Loadw(base,offset: CARDINAL);
+VAR page: CARDINAL;
+BEGIN
+  INC(base, offset * 2);
+  page   := base DIV BLOCKSIZE;
+  offset := base MOD BLOCKSIZE;
+  Store(GetWord(page, offset));
+END Loadw;
+
+PROCEDURE Loadb(base,offset: CARDINAL);
+BEGIN
+  INC(base, offset);
+  page   := base DIV BLOCKSIZE;
+  offset := base MOD BLOCKSIZE;
+  Store(GetByte(page, offset));
+END Loadb;
+
+PROCEDURE Savew(base,offset,value: CARDINAL);
+VAR ptr: POINTER TO ARRAY [0..1] OF Byte;
+BEGIN
+  INC(base, offset * 2);
+  ptr := basePtr + base;
+  ptr^[0] := value DIV 256;
+  ptr^[1] := value MOD 256;
+END Savew;
+
+PROCEDURE Saveb(base,offset,value: CARDINAL);
+VAR ptr: POINTER TO ARRAY [0..0] OF Byte;
+BEGIN
+  INC(base, offset);
+  ptr := basePtr + base;
+  ptr^[0] := value;
+END Saveb;
+
+END Misc.

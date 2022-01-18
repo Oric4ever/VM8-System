@@ -1,0 +1,47 @@
+DEFINITION MODULE GameFile;
+FROM SYSTEM IMPORT ADDRESS, BYTE, WORD;
+
+(* Infocom Game Header *)
+TYPE
+    Header      = RECORD
+                    versionAndFlags : ARRAY [0..1] OF BYTE;
+                    release         : CARDINAL;  (* game release number             *)
+                    residentBytes   : CARDINAL;  (* # of bytes in the resident area *)
+                    gameOffset      : CARDINAL;  (* offset to start of game         *)
+                    vocabOffset     : CARDINAL;  (* offset to vocab list            *)
+                    objectOffset    : CARDINAL;  (* offset to object/room list      *)
+                    variableOffset  : CARDINAL;  (* offset to global variables      *)
+                    saveBytes       : CARDINAL;  (* # of bytes in the save game area*)
+                    flags2          : CARDINAL;  (* Z-CODE printing modes           *)
+                    serialNum       : ARRAY [0..5] OF CHAR;
+                    commonWordOffset: CARDINAL;  (* offset to common word list      *)
+                    verifyLength    : CARDINAL;  (* # of words in the game file     *)
+                    verifyChecksum  : CARDINAL;  (* game checksum, used by Verify   *)
+                    padding1        : ARRAY [1..8] OF WORD;
+                    fkeyOffset      : CARDINAL;  (* fkey offset (?)                 *)
+                    padding2        : ARRAY [1..2] OF WORD;
+                    alphabetOffset  : CARDINAL;  (* offset of alternate alphabets   *)
+                    padding3        : ARRAY [1..5] OF WORD;
+                  END;
+
+VAR gameHeader    : Header;
+    residentBlocks: CARDINAL;
+    basePtr       : ADDRESS;
+    globalPtr     : POINTER TO ARRAY [0..255] OF CARDINAL;
+    commonWordPtr : ADDRESS;
+    objBase       : ADDRESS;
+    defaultProps  : POINTER TO ARRAY [1..31] OF CARDINAL;
+
+PROCEDURE OpenFile  (gameName: ARRAY OF CHAR): BOOLEAN;
+PROCEDURE ReadHeader(VAR header: Header);
+PROCEDURE LoadPages (block, numBlocks: CARDINAL; addr: ADDRESS);
+PROCEDURE CloseFile;
+PROCEDURE GetByte   (VAR page, offset : CARDINAL): CARDINAL;
+PROCEDURE GetWord   (VAR page, offset : CARDINAL): CARDINAL;
+
+PROCEDURE Save;
+PROCEDURE Restore;
+PROCEDURE Check(VAR header, info: Header): BOOLEAN;
+
+END GameFile.
+

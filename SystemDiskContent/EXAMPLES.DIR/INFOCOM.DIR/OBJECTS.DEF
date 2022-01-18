@@ -1,0 +1,18 @@
+DEFINITION MODULE Objects;
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE  PrintObj(objNum: CARDINAL);
+PROCEDURE RemoveObj(objNum: CARDINAL);
+PROCEDURE InsertObj(o1,o2 : CARDINAL);
+
+PROCEDURE GetParent (objNum: CARDINAL);
+PROCEDURE GetChild  (objNum: CARDINAL);
+PROCEDURE GetSibling(objNum: CARDINAL);
+PROCEDURE JumpIn    (o1, o2: CARDINAL);
+
+PROCEDURE  TestAttr(objNum, attribute: CARDINAL);
+PROCEDURE   SetAttr(objNum, attribute: CARDINAL);
+PROCEDURE ClearAttr(objNum, attribute: CARDINAL);
+
+PROCEDURE PropTableAddr(objNum : CARDINAL): ADDRESS;
+END Objects.

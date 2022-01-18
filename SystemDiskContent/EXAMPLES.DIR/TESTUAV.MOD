@@ -1,0 +1,27 @@
+MODULE TestUAV;
+IMPORT Out, Object, Drone, UAV;
+
+VAR drone: Drone.Pointer;
+    uav  :   UAV.Pointer;
+    fleet: ARRAY 10 OF Drone.Pointer;
+    i    : INTEGER;
+
+PROCEDURE Move(VAR drone: Drone.Pointer);
+VAR droneClass: Drone.ClassRef;
+    moveTo    : Drone.MoveProc;
+BEGIN
+(* $T- don't generate the type guard *)
+  moveTo := drone.class(Drone.ClassRef).moveTo;
+  moveTo(drone^, 10, 10)
+END Move;
+
+BEGIN
+  NEW(uav); UAV.Init(uav^); Move(uav);
+  FOR i := 0 TO LEN(fleet)-1 DO
+    IF ODD(i)
+    THEN NEW(drone); Drone.Init(drone^); fleet[i] := drone
+    ELSE NEW( uav );  UAV .Init( uav^ ); fleet[i] := uav
+    END
+  END;
+  FOR i := 0 TO LEN(fleet)-1 DO Move(fleet[i]) END;
+END TestUAV.

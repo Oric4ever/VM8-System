@@ -1,0 +1,81 @@
+MODULE Adv11;
+IMPORT Texts, Out;
+CONST N = 10;
+TYPE Grid = ARRAY N+2,N+2 OF BYTE;
+VAR t: Texts.TEXT;
+    grid: Grid;
+    i, j, n: INTEGER;
+    digit: CHAR;
+    totalFlashes: LONGINT;
+
+PROCEDURE ResetBorder(VAR grid: Grid);
+VAR n: INTEGER;
+BEGIN
+  FOR n:=0 TO N+1 DO
+    grid[0][n] := 11; grid[N+1][n] := 11;
+    grid[n][0] := 11; grid[n][N+1] := 11;
+  END
+END ResetBorder;
+
+PROCEDURE Increase(VAR grid: Grid): INTEGER;
+VAR nbFlashes, i, j: INTEGER;
+  PROCEDURE Flash(VAR grid: Grid; x,y: INTEGER): INTEGER;
+  VAR nbFlashes,i,j: INTEGER;
+  BEGIN
+    nbFlashes := 1;
+    FOR j := y-1 TO y+1 DO
+      FOR i := x-1 TO x+1 DO
+        IF (i # x) OR (j # y) THEN
+          INC(grid[j][i]);
+          IF grid[j][i]=10 THEN nbFlashes := nbFlashes + Flash(grid,i,j) END
+        END
+      END
+    END;
+    RETURN nbFlashes
+  END Flash;
+BEGIN
+  nbFlashes := 0;
+  FOR j:=1 TO N DO
+    FOR i:=1 TO N DO
+      INC(grid[j][i]);
+      IF grid[j][i]=10 THEN nbFlashes := nbFlashes + Flash(grid,i,j) END
+    END
+  END;
+  FOR j := 1 TO N DO
+    FOR i := 1 TO N DO
+      IF grid[j][i] > 9 THEN grid[j][i] := 0 END
+    END
+  END;
+  RETURN nbFlashes
+END Increase;
+
+PROCEDURE Synchronized(grid: Grid): BOOLEAN;
+VAR i,j,sum: INTEGER;
+BEGIN
+  sum := 0;
+  FOR j := 1 TO N DO
+    FOR i := 1 TO N DO sum := sum + grid[j][i] END
+  END;
+  RETURN sum = 0
+END Synchronized;
+
+BEGIN
+  ASSERT( Texts.OpenText(t, "input.11") );
+  FOR j := 1 TO N DO
+    FOR i := 1 TO N DO
+      Texts.ReadChar(t, digit);
+      grid[j][i] := ORD(digit) - ORD('0')
+    END;
+    Texts.ReadLn(t)
+  END;
+  ResetBorder(grid);
+
+  FOR n := 1 TO 100 DO
+    totalFlashes := totalFlashes + LONG(Increase(grid));
+  END;
+  Out.String("Part A: "); Out.Long(totalFlashes, 8); Out.Ln;
+
+  n := 100; ResetBorder(grid);
+  WHILE NOT Synchronized(grid) DO Increase(grid); INC(n) END;
+  Out.String("Part B: "); Out.Int(n, 5); Out.Ln
+END Adv11.

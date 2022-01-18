@@ -1,0 +1,50 @@
+MODULE Adv03b;
+IMPORT Texts, Out;
+CONST SIZE=12; NB = 1000;
+VAR
+  gamma, epsilon, i, n, power2: INTEGER;
+  o2, co2: ARRAY NB OF SET;
+  string: ARRAY 16 OF CHAR;
+  t : Texts.TEXT;
+
+PROCEDURE Select(bit: INTEGER;
+                 keepMostCommon: BOOLEAN;
+                 VAR list: ARRAY OF SET;
+                 VAR nb: INTEGER);
+VAR i, j, count: INTEGER;
+    keepOnes: BOOLEAN;
+BEGIN
+  count := 0;
+  FOR i := 0 TO nb-1 DO
+    IF bit IN list[i] THEN INC(count) END
+  END;
+  IF keepMostCommon
+  THEN keepOnes := count >= nb-count
+  ELSE keepOnes := count < nb-count
+  END;
+  j := 0;
+  FOR i := 0 TO nb-1 DO
+    IF keepOnes AND (bit IN list[i]) OR NOT keepOnes AND NOT (bit IN list[i]) THEN
+      list[j] := list[i];
+      INC(j)
+    END
+  END;
+  nb := j;
+END Select;
+
+BEGIN
+  IF Texts.OpenText(t, "input.03") THEN
+    FOR n := 0 TO NB-1 DO
+      Texts.ReadString(t, string);
+      FOR i := 0 TO SIZE-1 DO
+        IF string[SIZE-1-i] = "1" THEN o2[n] := o2[n] + {i} END
+      END;
+    END;
+    co2 := o2;
+    i := SIZE-1; n := NB; WHILE n > 1 DO Select(i, TRUE, o2, n); DEC(i) END;
+    ASSERT(n=1);
+    i := SIZE-1; n := NB; WHILE n > 1 DO Select(i,FALSE,co2, n); DEC(i) END;
+    ASSERT(n=1);
+    Out.Long(LONG(ORD(o2[0])) * LONG(ORD(co2[0])), 8)
+  END;
+END Adv03b.

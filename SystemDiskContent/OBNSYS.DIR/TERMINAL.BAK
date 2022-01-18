@@ -1,0 +1,167 @@
+MODULE Terminal;
+IMPORT SYSTEM;
+CONST
+    NUL=0X; BACKSP=08X; TAB=09X; LF=0AX; CR=0DX; CANCEL=18X; ESC=1BX; DEL=7FX;
+    CONSTAT = 1; CONIN = 2; CONOUT = 3;
+
+(* $O- remove overflow tests *)
+(* $[+ remove procedure names *)
+
+VAR numRows*, numCols* : INTEGER;
+    lastReadChar : CHAR;
+    mustReadAgain: BOOLEAN;
+    initialized  : BOOLEAN;
+
+PROCEDURE WriteChar*(ch: CHAR);
+VAR dummy: INTEGER;
+BEGIN
+  dummy := SYSTEM.SYS(CONOUT, ORD(ch))
+END WriteChar;
+
+PROCEDURE WriteLn*; BEGIN WriteChar(CR); WriteChar(LF) END WriteLn;
+
+PROCEDURE WriteString*(s: ARRAY OF CHAR);
+VAR i: INTEGER;
+BEGIN
+  i := 0; WHILE (i < LEN(s)) AND (s[i] # NUL) DO WriteChar(s[i]); INC(i) END
+END WriteString;
+
+PROCEDURE WriteNum*(n: INTEGER);
+(* Write positive integers only *)
+BEGIN
+  IF n >= 10 THEN WriteNum(n DIV 10) END;
+  WriteChar(CHR(n MOD 10 + ORD('0')))
+END WriteNum;
+
+PROCEDURE GotoXY*(col,row: INTEGER);
+BEGIN
+  WriteChar(ESC);
+  WriteChar('['); WriteNum(row+1);
+  WriteChar(';'); WriteNum(col+1);
+  WriteChar('H');
+END GotoXY;
+
+PROCEDURE CSI(command: CHAR);
+BEGIN
+  WriteChar(ESC); WriteChar('['); WriteChar(command)
+END CSI;
+
+PROCEDURE Background*(color: INTEGER);
+BEGIN
+  CSI('4'); WriteChar(CHR( ORD('0') + color )); WriteChar('m')
+END Background;
+
+PROCEDURE Foreground*(color: INTEGER);
+BEGIN
+  CSI('3'); WriteChar(CHR( ORD('0') + color )); WriteChar('m')
+END Foreground;
+
+PROCEDURE Home*;        BEGIN CSI('H')                 END Home;
+PROCEDURE ClearScreen*; BEGIN CSI('J'); Home           END ClearScreen;
+PROCEDURE Highlight*;   BEGIN CSI('1'); WriteChar('m') END Highlight;
+PROCEDURE Normal*;      BEGIN CSI('m')                 END Normal;
+PROCEDURE CursorOff*;   BEGIN CSI('?'); WriteNum(25); WriteChar('l') END CursorOff;
+PROCEDURE CursorOn*;    BEGIN CSI('?'); WriteNum(25); WriteChar('h') END CursorOn;
+
+PROCEDURE ReadChar*(VAR ch: CHAR);
+BEGIN
+  IF NOT mustReadAgain THEN lastReadChar := CHR(SYSTEM.SYS(CONIN,0)) END;
+  ch := lastReadChar;
+  mustReadAgain := FALSE;
+END ReadChar;
+
+PROCEDURE ReadAgain*; BEGIN mustReadAgain := TRUE END ReadAgain;
+
+PROCEDURE BusyRead*(VAR ch: CHAR);
+VAR c: CHAR;
+BEGIN
+  IF mustReadAgain THEN ch := lastReadChar
+  ELSE
+    IF SYSTEM.SYS(CONSTAT,0) = 0
+    THEN ch := NUL
+    ELSE ch := CHR(SYSTEM.SYS(CONIN,0));
+         IF ch # NUL THEN lastReadChar := ch END;
+    END;
+  END;
+  mustReadAgain := FALSE;
+END BusyRead;
+
+PROCEDURE ClearToEOL*;  BEGIN CSI('K') END ClearToEOL;
+PROCEDURE InsertLine*;  BEGIN CSI('L') END InsertLine;
+PROCEDURE DeleteLine*;  BEGIN CSI('M') END DeleteLine;
+
+PROCEDURE ReadNum*(VAR n: INTEGER);
+(* Read positive integers only *)
+VAR char: CHAR;
+BEGIN
+  n := 0;
+  ReadChar(char);
+  WHILE (char >= '0') AND (char <= '9') DO
+    n := n * 10 + ORD(char) - ORD('0');
+    ReadChar(char);
+  END;
+  ReadAgain
+END ReadNum;
+
+PROCEDURE QueryCursorPosition*(VAR col,row: INTEGER);
+VAR char : CHAR;
+BEGIN
+  (* flush input *)
+  WHILE SYSTEM.SYS(CONSTAT,0) # 0 DO char := CHR(SYSTEM.SYS(CONIN,0)) END;
+  (* Query Cursor Position *)
+  CSI('6'); WriteChar('n');
+  (* Reads a Cursor Position Report (CPR) and returns the current row *)
+  ReadChar(char); (* should be ESC *)
+  ReadChar(char); (* should be [   *)
+  ReadNum (row );
+  ReadChar(char); (* should be ;   *)
+  ReadNum (col );
+  ReadChar(char); (* should be R   *)
+END QueryCursorPosition;
+
+PROCEDURE InitScreen*;
+VAR col, row: INTEGER;
+BEGIN
+  ClearScreen;
+  numCols := 0;
+  REPEAT WriteChar('-'); INC(numCols); QueryCursorPosition(col,row) UNTIL row # 1;
+  WriteChar(CR);
+  FOR row:=1 TO 160 DO WriteChar(LF) END; (* assumes it's enough to have the screen scroll *)
+  QueryCursorPosition(col, numRows);
+  ClearScreen;
+  initialized := TRUE;
+END InitScreen;
+
+PROCEDURE ReadLine*(VAR s: ARRAY OF CHAR);
+VAR ch  : CHAR;
+    length : INTEGER;
+BEGIN
+  length := 0;
+  REPEAT
+    ReadChar(ch);
+    IF ch = TAB THEN ch := ' ' END;
+    IF (ch = BACKSP) OR (ch = DEL) THEN
+      IF length # 0 THEN
+        WriteChar(BACKSP); WriteChar(' '); WriteChar(BACKSP);
+        DEC(length)
+      END;
+    ELSIF ch = CANCEL THEN
+      WHILE length # 0 DO
+        WriteChar(BACKSP); WriteChar(' '); WriteChar(BACKSP);
+        DEC(length)
+      END;
+    ELSIF (ch < DEL) AND (ch # CR) THEN
+      s[length] := ch;
+      IF ch < ' ' THEN WriteChar('^'); WriteChar(CHR(ORD(ch)+64))
+      ELSE WriteChar(ch)
+      END;
+      INC(length)
+    END;
+  UNTIL (ch = CR) OR (length >= LEN(s));
+  IF length < LEN(s) THEN s[length] := NUL END;
+  WriteLn
+END ReadLine;
+
+BEGIN
+  IF NOT initialized THEN InitScreen END;
+END Terminal.

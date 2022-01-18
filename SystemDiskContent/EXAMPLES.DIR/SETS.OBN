@@ -1,0 +1,8 @@
+MODULE Sets;
+VAR a, b, c: SET;
+BEGIN
+  a := b + c;
+  a := b - c;
+  a := b * c;
+  a := b / c;
+END Sets.
